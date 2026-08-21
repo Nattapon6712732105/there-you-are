@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
@@ -79,6 +80,10 @@ class ApiService {
     Map<String, String>? headers,
   }) async {
     late http.Response res;
+    debugPrint('[API] --> $method $uri');
+    if (body != null) {
+      debugPrint('[API] body: ${jsonEncode(body)}');
+    }
     try {
       switch (method) {
         case 'POST':
@@ -97,14 +102,19 @@ class ApiService {
         default:
           res = await _client.get(uri, headers: headers ?? _headers);
       }
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[API] connection error: $e\n$st');
       throw ApiException('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง');
     }
+
+    debugPrint('[API] <-- ${res.statusCode} $uri');
+    debugPrint('[API] response: ${utf8.decode(res.bodyBytes)}');
 
     Map<String, dynamic> data;
     try {
       data = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[API] json decode error: $e');
       throw ApiException('การตอบกลับจากเซิร์ฟเวอร์ไม่ถูกต้อง',
           statusCode: res.statusCode);
     }
