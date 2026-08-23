@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_service.dart';
@@ -82,7 +84,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadCheckIns() async {
-    final messenger = ScaffoldMessenger.of(context);
     try {
       final list = await _api.getCheckIns();
       if (!mounted) return;
@@ -91,13 +92,13 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      messenger.showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(e.message), backgroundColor: Colors.red),
       );
     } catch (e, st) {
       debugPrint('[HomeScreen] _loadCheckIns unexpected error: $e\n$st');
       if (!mounted) return;
-      messenger.showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('เกิดข้อผิดพลาดในการโหลดข้อมูล: $e'),
           backgroundColor: Colors.red,
@@ -118,17 +119,215 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openGoogleMaps(double lat, double lng) async {
-    final uri = Uri.parse(
+    final googleMapsUri = Uri.parse(
         'https://www.google.com/maps/search/?api=1&query=$lat,$lng');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
+    final geoUri = Uri.parse('geo:$lat,$lng?q=$lat,$lng');
+
+    try {
+      if (await canLaunchUrl(googleMapsUri)) {
+        await launchUrl(googleMapsUri, mode: LaunchMode.externalApplication);
+      } else if (await canLaunchUrl(geoUri)) {
+        await launchUrl(geoUri, mode: LaunchMode.externalApplication);
+      } else {
+        final success = await launchUrl(googleMapsUri, mode: LaunchMode.externalApplication);
+        if (!success) {
+          await launchUrl(googleMapsUri, mode: LaunchMode.platformDefault);
+        }
+      }
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('ไม่สามารถเปิด Google Maps บนอุปกรณ์นี้ได้')),
+        SnackBar(content: Text('ไม่สามารถเปิด Google Maps ได้: $e')),
       );
     }
+  }
+
+  void _showAllCheckInsMapDialog() {
+    if (_checkIns.isEmpty) return;
+
+    double avgLat =
+        _checkIns.map((e) => e.lat).reduce((a, b) => a + b) / _checkIns.length;
+    double avgLng =
+        _checkIns.map((e) => e.lng).reduce((a, b) => a + b) / _checkIns.length;
+
+    CheckIn? selectedItem;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) => Dialog.fullscreen(
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text('แผนที่รวมตำแหน่ง (${_checkIns.length} จุด)'),
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(dialogCtx),
+              ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.my_location),
+                  tooltip: 'พิกัดกลาง',
+                  onPressed: () => setDialogState(() => selectedItem = null),
+                ),
+              ],
+            ),
+            body: Stack(
+              children: [
+                FlutterMap(
+                  options: MapOptions(
+                    initialCenter: LatLng(avgLat, avgLng),
+                    initialZoom: 12,
+                    onTap: (tapPos, latLng) =>
+                        setDialogState(() => selectedItem = null),
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.example.there_you_are',
+                    ),
+                    MarkerLayer(
+                      markers: _checkIns.map((item) {
+                        final isSelected = selectedItem?.id == item.id;
+                        return Marker(
+                          point: LatLng(item.lat, item.lng),
+                          width: isSelected ? 48 : 36,
+                          height: isSelected ? 48 : 36,
+                          child: GestureDetector(
+                            onTap: () {
+                              setDialogState(() => selectedItem = item);
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? Colors.deepPurple
+                                    : Colors.redAccent,
+                                shape: BoxShape.circle,
+                                border:
+                                    Border.all(color: Colors.white, width: 2),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black26,
+                                    blurRadius: 6,
+                                    offset: Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                Icons.person_pin_circle_rounded,
+                                color: Colors.white,
+                                size: isSelected ? 30 : 22,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+                if (selectedItem != null)
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 24,
+                    child: Card(
+                      elevation: 6,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 18,
+                                  backgroundImage: (selectedItem!
+                                                  .user?.profileImage !=
+                                              null &&
+                                          selectedItem!
+                                              .user!.profileImage!.isNotEmpty)
+                                      ? NetworkImage(
+                                          selectedItem!.user!.profileImage!)
+                                      : null,
+                                  child: (selectedItem!.user?.profileImage ==
+                                              null ||
+                                          selectedItem!
+                                              .user!.profileImage!.isEmpty)
+                                      ? Text(selectedItem!.user?.name?[0]
+                                              .toUpperCase() ??
+                                          '?')
+                                      : null,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        selectedItem!.user?.name ??
+                                            'สมาชิกทั่วไป',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                      Text(
+                                        selectedItem!.locationName ??
+                                            'ไม่ได้ระบุชื่อสถานที่',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.deepPurple.shade700,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close, size: 20),
+                                  onPressed: () =>
+                                      setDialogState(() => selectedItem = null),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '📍 Lat: ${selectedItem!.lat} • Lng: ${selectedItem!.lng}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                OutlinedButton.icon(
+                                  onPressed: () => _openGoogleMaps(
+                                      selectedItem!.lat, selectedItem!.lng),
+                                  icon: const Icon(Icons.map_rounded, size: 16),
+                                  label: const Text('เปิดใน Google Maps'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _logout() async {
@@ -209,12 +408,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final formKey = GlobalKey<FormState>();
-    final latCtrl = TextEditingController(text: '13.7563');
-    final lngCtrl = TextEditingController(text: '100.5018');
+    final latCtrl = TextEditingController();
+    final lngCtrl = TextEditingController();
     final nameCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     final imgCtrl = TextEditingController();
     bool saving = false;
+    bool fetchingLocation = true;
+    bool initialLocationFetched = false;
 
     if (!mounted) return;
     await showDialog(
@@ -224,132 +425,237 @@ class _HomeScreenState extends State<HomeScreen> {
         final dialogNavigator = Navigator.of(ctx);
         final messenger = ScaffoldMessenger.of(context);
         return StatefulBuilder(
-          builder: (dialogContext, setDialogState) => AlertDialog(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Row(
-              children: [
-                Icon(Icons.add_location_alt_rounded, color: Colors.deepPurple),
-                SizedBox(width: 8),
-                Text('สร้างการ Check-in ใหม่'),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Form(
-                key: formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextFormField(
-                      controller: nameCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'ชื่อสถานที่',
-                        prefixIcon: Icon(Icons.place_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (v) => v == null || v.trim().isEmpty
-                          ? 'กรุณากรอกชื่อสถานที่'
-                          : null,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: latCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true, signed: true),
-                            decoration: const InputDecoration(
-                              labelText: 'Latitude',
-                              border: OutlineInputBorder(),
-                            ),
-                            validator: (v) =>
-                                double.tryParse(v ?? '') == null ? 'ผิด' : null,
-                          ),
+          builder: (dialogContext, setDialogState) {
+            if (!initialLocationFetched) {
+              initialLocationFetched = true;
+              PermissionService.getCurrentPositionWithResult().then((res) {
+                if (mounted) {
+                  setDialogState(() {
+                    if (res.isSuccess) {
+                      latCtrl.text = res.position!.latitude.toStringAsFixed(6);
+                      lngCtrl.text = res.position!.longitude.toStringAsFixed(6);
+                    } else {
+                      if (res.errorMessage != null) {
+                        messenger.showSnackBar(
+                          SnackBar(content: Text(res.errorMessage!)),
+                        );
+                      }
+                    }
+                    fetchingLocation = false;
+                  });
+                }
+              });
+            }
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.add_location_alt_rounded,
+                      color: Colors.deepPurple),
+                  SizedBox(width: 8),
+                  Text('สร้างการ Check-in ใหม่'),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextFormField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'ชื่อสถานที่',
+                          prefixIcon: Icon(Icons.place_outlined),
+                          border: OutlineInputBorder(),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextFormField(
-                            controller: lngCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true, signed: true),
-                            decoration: const InputDecoration(
-                              labelText: 'Longitude',
-                              border: OutlineInputBorder(),
-                            ),
-                            validator: (v) =>
-                                double.tryParse(v ?? '') == null ? 'ผิด' : null,
+                        validator: (v) => v == null || v.trim().isEmpty
+                            ? 'กรุณากรอกชื่อสถานที่'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.my_location_rounded,
+                                  size: 16, color: Colors.deepPurple),
+                              SizedBox(width: 4),
+                              Text(
+                                'พิกัด GPS ปัจจุบัน',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.deepPurple,
+                                ),
+                              ),
+                            ],
                           ),
+                          InkWell(
+                            onTap: fetchingLocation
+                                ? null
+                                : () async {
+                                    setDialogState(
+                                        () => fetchingLocation = true);
+                                    final res = await PermissionService
+                                        .getCurrentPositionWithResult();
+                                    setDialogState(() {
+                                      if (res.isSuccess) {
+                                        latCtrl.text =
+                                            res.position!.latitude.toStringAsFixed(6);
+                                        lngCtrl.text =
+                                            res.position!.longitude.toStringAsFixed(6);
+                                      } else {
+                                        if (res.errorMessage != null) {
+                                          messenger.showSnackBar(
+                                            SnackBar(
+                                                content: Text(res.errorMessage!)),
+                                          );
+                                        }
+                                      }
+                                      fetchingLocation = false;
+                                    });
+                                  },
+                            borderRadius: BorderRadius.circular(6),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              child: Row(
+                                children: [
+                                  if (fetchingLocation)
+                                    const SizedBox(
+                                      width: 12,
+                                      height: 12,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  else
+                                    const Icon(Icons.refresh_rounded,
+                                        size: 14, color: Colors.deepPurple),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    fetchingLocation
+                                        ? 'กำลังดึงพิกัด...'
+                                        : 'ดึงพิกัดสด',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.deepPurple,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: latCtrl,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true, signed: true),
+                              decoration: const InputDecoration(
+                                labelText: 'Latitude',
+                                border: OutlineInputBorder(),
+                              ),
+                              validator: (v) => double.tryParse(v ?? '') == null
+                                  ? 'ผิด'
+                                  : null,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextFormField(
+                              controller: lngCtrl,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true, signed: true),
+                              decoration: const InputDecoration(
+                                labelText: 'Longitude',
+                                border: OutlineInputBorder(),
+                              ),
+                              validator: (v) => double.tryParse(v ?? '') == null
+                                  ? 'ผิด'
+                                  : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: descCtrl,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'รายละเอียด / ข้อความ',
+                          prefixIcon: Icon(Icons.notes_outlined),
+                          border: OutlineInputBorder(),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: descCtrl,
-                      maxLines: 2,
-                      decoration: const InputDecoration(
-                        labelText: 'รายละเอียด / ข้อความ',
-                        prefixIcon: Icon(Icons.notes_outlined),
-                        border: OutlineInputBorder(),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: imgCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'URL รูปภาพ (ถ้ามี)',
-                        prefixIcon: Icon(Icons.image_outlined),
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: imgCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'URL รูปภาพ (ถ้ามี)',
+                          prefixIcon: Icon(Icons.image_outlined),
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: saving ? null : () => dialogNavigator.pop(),
-                child: const Text('ยกเลิก'),
-              ),
-              FilledButton(
-                onPressed: saving
-                    ? null
-                    : () async {
-                        if (!formKey.currentState!.validate()) return;
-                        setDialogState(() => saving = true);
-                        try {
-                          await _api.createCheckIn(
-                            token: token,
-                            lat: double.parse(latCtrl.text),
-                            lng: double.parse(lngCtrl.text),
-                            locationName: nameCtrl.text.trim(),
-                            description: descCtrl.text.trim(),
-                            imageUrl: imgCtrl.text.trim(),
-                          );
-                          dialogNavigator.pop();
-                          messenger.showSnackBar(
-                            const SnackBar(
-                                content: Text('สร้างการ Check-in สำเร็จ!')),
-                          );
-                          _loadCheckIns();
-                        } on ApiException catch (e) {
-                          setDialogState(() => saving = false);
-                          messenger.showSnackBar(
-                            SnackBar(
-                                content: Text(e.message),
-                                backgroundColor: Colors.red),
-                          );
-                        }
-                      },
-                child: saving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('บันทึก'),
-              ),
-            ],
-          ),
+              actions: [
+                TextButton(
+                  onPressed: saving ? null : () => dialogNavigator.pop(),
+                  child: const Text('ยกเลิก'),
+                ),
+                FilledButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          setDialogState(() => saving = true);
+                          try {
+                            await _api.createCheckIn(
+                              token: token,
+                              lat: double.parse(latCtrl.text),
+                              lng: double.parse(lngCtrl.text),
+                              locationName: nameCtrl.text.trim(),
+                              description: descCtrl.text.trim(),
+                              imageUrl: imgCtrl.text.trim(),
+                            );
+                            dialogNavigator.pop();
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                  content: Text('สร้างการ Check-in สำเร็จ!')),
+                            );
+                            _loadCheckIns();
+                          } on ApiException catch (e) {
+                            setDialogState(() => saving = false);
+                            messenger.showSnackBar(
+                              SnackBar(
+                                  content: Text(e.message),
+                                  backgroundColor: Colors.red),
+                            );
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('บันทึก'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -369,6 +675,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final lngCtrl = TextEditingController(text: item.lng.toString());
     final imgCtrl = TextEditingController(text: item.imageUrl ?? '');
     bool saving = false;
+    bool fetchingLocation = false;
 
     if (!mounted) return;
     await showDialog(
@@ -405,6 +712,83 @@ class _HomeScreenState extends State<HomeScreen> {
                           : null,
                     ),
                     const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.my_location_rounded,
+                                size: 16, color: Colors.deepPurple),
+                            SizedBox(width: 4),
+                            Text(
+                              'พิกัด GPS',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.deepPurple,
+                              ),
+                            ),
+                          ],
+                        ),
+                        InkWell(
+                          onTap: fetchingLocation
+                              ? null
+                              : () async {
+                                  setDialogState(
+                                      () => fetchingLocation = true);
+                                  final pos = await PermissionService
+                                      .getCurrentPosition();
+                                  setDialogState(() {
+                                    if (pos != null) {
+                                      latCtrl.text =
+                                          pos.latitude.toStringAsFixed(6);
+                                      lngCtrl.text =
+                                          pos.longitude.toStringAsFixed(6);
+                                    } else {
+                                      messenger.showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                              'ไม่สามารถดึงพิกัด GPS ได้ กรุณาเปิด Location บนเครื่อง'),
+                                        ),
+                                      );
+                                    }
+                                    fetchingLocation = false;
+                                  });
+                                },
+                          borderRadius: BorderRadius.circular(6),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            child: Row(
+                              children: [
+                                if (fetchingLocation)
+                                  const SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                else
+                                  const Icon(Icons.refresh_rounded,
+                                      size: 14, color: Colors.deepPurple),
+                                const SizedBox(width: 4),
+                                Text(
+                                  fetchingLocation
+                                      ? 'กำลังดึงพิกัด...'
+                                      : 'ใช้ตำแหน่งปัจจุบัน',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.deepPurple,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
                     Row(
                       children: [
                         Expanded(
@@ -962,21 +1346,39 @@ class _HomeScreenState extends State<HomeScreen> {
 
           // Feed Header Title
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                '📍 ฟีดการ Check-in ล่าสุด',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
+              const Expanded(
+                child: Text(
+                  '📍 ฟีดการ Check-in ล่าสุด',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              Chip(
-                label: Text('${_checkIns.length} รายการ'),
-                backgroundColor:
-                    Theme.of(context).colorScheme.primaryContainer,
-                labelStyle: const TextStyle(fontSize: 12),
-              ),
+              const SizedBox(width: 6),
+              if (_checkIns.isNotEmpty)
+                ActionChip(
+                  avatar: const Icon(Icons.map_rounded,
+                      size: 14, color: Colors.deepPurple),
+                  label: Text('ดูแผนที่รวม (${_checkIns.length})',
+                      style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.deepPurple)),
+                  onPressed: _showAllCheckInsMapDialog,
+                  backgroundColor: Colors.deepPurple.shade50,
+                  visualDensity: VisualDensity.compact,
+                )
+              else
+                Chip(
+                  label: const Text('0 รายการ'),
+                  backgroundColor:
+                      Theme.of(context).colorScheme.primaryContainer,
+                  labelStyle: const TextStyle(fontSize: 11),
+                  visualDensity: VisualDensity.compact,
+                ),
             ],
           ),
 
@@ -1179,14 +1581,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            '📍 Lat: ${item.lat} • Lng: ${item.lng}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontFamily: 'monospace',
-                              color: Colors.grey.shade700,
+                          Expanded(
+                            child: Text(
+                              '📍 Lat: ${item.lat} • Lng: ${item.lng}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontFamily: 'monospace',
+                                color: Colors.grey.shade700,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
                             ),
                           ),
+                          const SizedBox(width: 8),
                           // ==========================================
                           // GOOGLE MAPS LINK BUTTON
                           // ==========================================
@@ -1197,6 +1604,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 6, vertical: 2),
                               child: Row(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
                                   const Icon(Icons.map_rounded,
                                       size: 16, color: Colors.blueAccent),
@@ -1215,6 +1623,51 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                         ],
+                      ),
+                      // ==========================================
+                      // EMBEDDED INTERACTIVE MAP (WEB & APP)
+                      // ==========================================
+                      const SizedBox(height: 10),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          height: 170,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: FlutterMap(
+                            options: MapOptions(
+                              initialCenter: LatLng(item.lat, item.lng),
+                              initialZoom: 14,
+                              interactionOptions: const InteractionOptions(
+                                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                              ),
+                            ),
+                            children: [
+                              TileLayer(
+                                urlTemplate:
+                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName: 'com.example.there_you_are',
+                              ),
+                              MarkerLayer(
+                                markers: [
+                                  Marker(
+                                    point: LatLng(item.lat, item.lng),
+                                    width: 40,
+                                    height: 40,
+                                    child: const Icon(
+                                      Icons.location_on_rounded,
+                                      color: Colors.redAccent,
+                                      size: 38,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                       if (item.description != null &&
                           item.description!.isNotEmpty) ...[
