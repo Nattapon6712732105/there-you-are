@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
-import 'screens/login_screen.dart';
+import 'screens/welcome_screen.dart';
 import 'services/api_service.dart';
 
 void main() {
@@ -14,7 +14,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Where Am I',
+      title: 'There You Are',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
@@ -58,7 +58,7 @@ class _AuthGateState extends State<AuthGate> {
       case true:
         return const HomeScreen();
       default:
-        return const LoginScreen();
+        return const WelcomeScreen();
     }
   }
 }

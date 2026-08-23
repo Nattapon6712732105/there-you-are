@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_service.dart';
-import 'login_screen.dart';
+import '../services/device_service.dart';
+import '../services/permission_service.dart';
+import 'welcome_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -12,23 +15,47 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _api = ApiService();
+  int _currentIndex = 0;
+
   User? _user;
-  bool _loading = true;
+  List<CheckIn> _checkIns = [];
+  bool _loadingUser = true;
+  bool _loadingFeed = true;
+  bool _isSystemHealthy = false;
+  DeviceDetails? _deviceDetails;
 
   @override
   void initState() {
     super.initState();
+    _initData();
+  }
+
+  void _initData() {
+    _loadDeviceInfo();
+    _checkHealthStatus();
     _loadProfile();
+    _loadCheckIns();
+  }
+
+  Future<void> _loadDeviceInfo() async {
+    final info = await DeviceService.getDeviceDetails();
+    if (mounted) {
+      setState(() => _deviceDetails = info);
+    }
+  }
+
+  Future<void> _checkHealthStatus() async {
+    final healthy = await _api.checkHealth();
+    if (mounted) {
+      setState(() => _isSystemHealthy = healthy);
+    }
   }
 
   Future<void> _loadProfile() async {
     final token = await _api.getToken();
     if (token == null) {
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
-        (route) => false,
-      );
+      _navigateToLogin();
       return;
     }
     try {
@@ -36,20 +63,71 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _user = user;
-        _loading = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.statusCode == 401 || e.statusCode == 403) {
         await _api.clearToken();
         if (!mounted) return;
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const LoginScreen()),
-          (route) => false,
-        );
+        _navigateToLogin();
         return;
       }
-      setState(() => _loading = false);
+    } catch (e, st) {
+      debugPrint('[HomeScreen] _loadProfile error: $e\n$st');
+    } finally {
+      if (mounted) {
+        setState(() => _loadingUser = false);
+      }
+    }
+  }
+
+  Future<void> _loadCheckIns() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final list = await _api.getCheckIns();
+      if (!mounted) return;
+      setState(() {
+        _checkIns = list;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
+    } catch (e, st) {
+      debugPrint('[HomeScreen] _loadCheckIns unexpected error: $e\n$st');
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('เกิดข้อผิดพลาดในการโหลดข้อมูล: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _loadingFeed = false);
+      }
+    }
+  }
+
+  void _navigateToLogin() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+      (route) => false,
+    );
+  }
+
+  Future<void> _openGoogleMaps(double lat, double lng) async {
+    final uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('ไม่สามารถเปิด Google Maps บนอุปกรณ์นี้ได้')),
+      );
     }
   }
 
@@ -57,6 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('ออกจากระบบ'),
         content: const Text('คุณต้องการออกจากระบบหรือไม่?'),
         actions: [
@@ -71,86 +150,1385 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted) return;
 
     final token = await _api.getToken();
     await _api.logout(token: token);
     if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (route) => false,
+    _navigateToLogin();
+  }
+
+  Future<void> _deleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('ลบบัญชีผู้ใช้'),
+        content: const Text(
+          'คุณแน่ใจหรือไม่ว่าต้องการลบบัญชีนี้? การกระทำนี้ไม่สามารถย้อนกลับได้',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ยกเลิก'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('ลบบัญชี'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final token = await _api.getToken();
+    if (token == null) return;
+
+    try {
+      await _api.deleteAccount(token: token);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('ลบบัญชีผู้ใช้เรียบร้อยแล้ว')),
+      );
+      _navigateToLogin();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _showCreateCheckInDialog() async {
+    final token = await _api.getToken();
+    if (token == null) {
+      _navigateToLogin();
+      return;
+    }
+
+    final formKey = GlobalKey<FormState>();
+    final latCtrl = TextEditingController(text: '13.7563');
+    final lngCtrl = TextEditingController(text: '100.5018');
+    final nameCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    final imgCtrl = TextEditingController();
+    bool saving = false;
+
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final dialogNavigator = Navigator.of(ctx);
+        final messenger = ScaffoldMessenger.of(context);
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              children: [
+                Icon(Icons.add_location_alt_rounded, color: Colors.deepPurple),
+                SizedBox(width: 8),
+                Text('สร้างการ Check-in ใหม่'),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'ชื่อสถานที่',
+                        prefixIcon: Icon(Icons.place_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (v) => v == null || v.trim().isEmpty
+                          ? 'กรุณากรอกชื่อสถานที่'
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: latCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true, signed: true),
+                            decoration: const InputDecoration(
+                              labelText: 'Latitude',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (v) =>
+                                double.tryParse(v ?? '') == null ? 'ผิด' : null,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            controller: lngCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true, signed: true),
+                            decoration: const InputDecoration(
+                              labelText: 'Longitude',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: (v) =>
+                                double.tryParse(v ?? '') == null ? 'ผิด' : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: descCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'รายละเอียด / ข้อความ',
+                        prefixIcon: Icon(Icons.notes_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: imgCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'URL รูปภาพ (ถ้ามี)',
+                        prefixIcon: Icon(Icons.image_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => dialogNavigator.pop(),
+                child: const Text('ยกเลิก'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) return;
+                        setDialogState(() => saving = true);
+                        try {
+                          await _api.createCheckIn(
+                            token: token,
+                            lat: double.parse(latCtrl.text),
+                            lng: double.parse(lngCtrl.text),
+                            locationName: nameCtrl.text.trim(),
+                            description: descCtrl.text.trim(),
+                            imageUrl: imgCtrl.text.trim(),
+                          );
+                          dialogNavigator.pop();
+                          messenger.showSnackBar(
+                            const SnackBar(
+                                content: Text('สร้างการ Check-in สำเร็จ!')),
+                          );
+                          _loadCheckIns();
+                        } on ApiException catch (e) {
+                          setDialogState(() => saving = false);
+                          messenger.showSnackBar(
+                            SnackBar(
+                                content: Text(e.message),
+                                backgroundColor: Colors.red),
+                          );
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('บันทึก'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showEditCheckInDialog(CheckIn item) async {
+    final token = await _api.getToken();
+    if (token == null) {
+      _navigateToLogin();
+      return;
+    }
+
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController(text: item.locationName ?? '');
+    final descCtrl = TextEditingController(text: item.description ?? '');
+    final latCtrl = TextEditingController(text: item.lat.toString());
+    final lngCtrl = TextEditingController(text: item.lng.toString());
+    final imgCtrl = TextEditingController(text: item.imageUrl ?? '');
+    bool saving = false;
+
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final dialogNavigator = Navigator.of(ctx);
+        final messenger = ScaffoldMessenger.of(context);
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Row(
+              children: [
+                Icon(Icons.edit_location_alt_rounded, color: Colors.deepPurple),
+                SizedBox(width: 8),
+                Text('แก้ไขการ Check-in'),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'ชื่อสถานที่',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (v) => v == null || v.trim().isEmpty
+                          ? 'กรุณากรอกชื่อสถานที่'
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: latCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true, signed: true),
+                            decoration: const InputDecoration(
+                              labelText: 'Latitude',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            controller: lngCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true, signed: true),
+                            decoration: const InputDecoration(
+                              labelText: 'Longitude',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: descCtrl,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'รายละเอียด / ข้อความ',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: imgCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'URL รูปภาพ',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => dialogNavigator.pop(),
+                child: const Text('ยกเลิก'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) return;
+                        setDialogState(() => saving = true);
+                        try {
+                          await _api.updateCheckIn(
+                            token: token,
+                            id: item.id,
+                            lat: double.tryParse(latCtrl.text),
+                            lng: double.tryParse(lngCtrl.text),
+                            locationName: nameCtrl.text.trim(),
+                            description: descCtrl.text.trim(),
+                            imageUrl: imgCtrl.text.trim(),
+                          );
+                          dialogNavigator.pop();
+                          messenger.showSnackBar(
+                            const SnackBar(
+                                content: Text('อัปเดตการ Check-in แล้ว')),
+                          );
+                          _loadCheckIns();
+                        } on ApiException catch (e) {
+                          setDialogState(() => saving = false);
+                          messenger.showSnackBar(
+                            SnackBar(
+                                content: Text(e.message),
+                                backgroundColor: Colors.red),
+                          );
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('บันทึกการแก้ไข'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _deleteCheckIn(int id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('ลบโพสต์ Check-in'),
+        content: const Text('คุณแน่ใจหรือไม่ว่าต้องการลบ Check-in นี้?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('ยกเลิก'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('ลบ'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final token = await _api.getToken();
+    if (token == null) return;
+    try {
+      await _api.deleteCheckIn(token: token, id: id);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('ลบ Check-in สำเร็จ')),
+      );
+      _loadCheckIns();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _showEditProfileDialog() async {
+    final token = await _api.getToken();
+    if (token == null) return;
+
+    final nameCtrl = TextEditingController(text: _user?.name ?? '');
+    bool saving = false;
+
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        final dialogNavigator = Navigator.of(ctx);
+        final messenger = ScaffoldMessenger.of(context);
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('แก้ไขชื่อผู้ใช้'),
+            content: TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'ชื่อ-นามสกุล',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => dialogNavigator.pop(),
+                child: const Text('ยกเลิก'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final newName = nameCtrl.text.trim();
+                        if (newName.isEmpty) return;
+                        setDialogState(() => saving = true);
+                        try {
+                          final updatedUser = await _api.updateProfile(
+                            token: token,
+                            name: newName,
+                          );
+                          if (mounted) {
+                            setState(() => _user = updatedUser);
+                          }
+                          dialogNavigator.pop();
+                          messenger.showSnackBar(
+                            const SnackBar(
+                                content:
+                                    Text('อัปเดตข้อมูลโปรไฟล์เรียบร้อยแล้ว')),
+                          );
+                        } on ApiException catch (e) {
+                          setDialogState(() => saving = false);
+                          messenger.showSnackBar(
+                            SnackBar(
+                                content: Text(e.message),
+                                backgroundColor: Colors.red),
+                          );
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('บันทึก'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showChangePasswordDialog() async {
+    final token = await _api.getToken();
+    if (token == null) return;
+
+    final formKey = GlobalKey<FormState>();
+    final oldPassCtrl = TextEditingController();
+    final newPassCtrl = TextEditingController();
+    bool saving = false;
+
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        final dialogNavigator = Navigator.of(ctx);
+        final messenger = ScaffoldMessenger.of(context);
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('เปลี่ยนรหัสผ่าน'),
+            content: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: oldPassCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'รหัสผ่านเดิม',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) =>
+                        v == null || v.isEmpty ? 'กรุณากรอกรหัสผ่านเดิม' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: newPassCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร)',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) => v == null || v.length < 8
+                        ? 'รหัสผ่านต้องอย่างน้อย 8 ตัวอักษร'
+                        : null,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => dialogNavigator.pop(),
+                child: const Text('ยกเลิก'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) return;
+                        setDialogState(() => saving = true);
+                        try {
+                          await _api.changePassword(
+                            token: token,
+                            oldPassword: oldPassCtrl.text,
+                            newPassword: newPassCtrl.text,
+                          );
+                          dialogNavigator.pop();
+                          messenger.showSnackBar(
+                            const SnackBar(
+                                content: Text('เปลี่ยนรหัสผ่านสำเร็จ!')),
+                          );
+                        } on ApiException catch (e) {
+                          setDialogState(() => saving = false);
+                          messenger.showSnackBar(
+                            SnackBar(
+                                content: Text(e.message),
+                                backgroundColor: Colors.red),
+                          );
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('เปลี่ยนรหัสผ่าน'),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Where Am I'),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.location_on_rounded,
+                  color: Colors.deepPurple, size: 20),
+            ),
+            const SizedBox(width: 8),
+            const Text(
+              'There You Are',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            ),
+            const Spacer(),
+
+            // ==========================================
+            // PREMIUM DEVICE BADGE ON APPBAR
+            // ==========================================
+            if (_deviceDetails != null)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _deviceDetails!.color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: _deviceDetails!.color.withValues(alpha: 0.4),
+                    width: 1,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _deviceDetails!.icon,
+                      size: 14,
+                      color: _deviceDetails!.color,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _deviceDetails!.platformName,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: _deviceDetails!.color,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(width: 8),
+          ],
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'ออกจากระบบ',
-            onPressed: _loading ? null : _logout,
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'รีเฟรชข้อมูล',
+            onPressed: () {
+              setState(() => _loadingFeed = true);
+              _loadProfile();
+              _loadCheckIns();
+              _checkHealthStatus();
+              _loadDeviceInfo();
+            },
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: () async {
-                setState(() => _loading = true);
-                await _loadProfile();
-              },
-              child: ListView(
-                padding: const EdgeInsets.all(24),
+      body: _currentIndex == 0 ? _buildFeedTab() : _buildProfileTab(),
+      floatingActionButton: _currentIndex == 0
+          ? FloatingActionButton.extended(
+              onPressed: _showCreateCheckInDialog,
+              icon: const Icon(Icons.add_location_alt_rounded),
+              label: const Text(
+                'Check-in',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              elevation: 4,
+            )
+          : null,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (index) =>
+            setState(() => _currentIndex = index),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.explore_outlined),
+            selectedIcon: Icon(Icons.explore_rounded),
+            label: 'Check-ins Feed',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline_rounded),
+            selectedIcon: Icon(Icons.person_rounded),
+            label: 'โปรไฟล์ & อุปกรณ์',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeedTab() {
+    return RefreshIndicator(
+      onRefresh: () async {
+        setState(() => _loadingFeed = true);
+        await _loadCheckIns();
+        await _checkHealthStatus();
+      },
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        children: [
+          // ==========================================
+          // PREMIUM DASHBOARD HEADER BANNER (ALWAYS VISIBLE IMMEDIATELY)
+          // ==========================================
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Colors.deepPurple.shade700,
+                  Colors.indigo.shade600,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.deepPurple.withValues(alpha: 0.3),
+                  blurRadius: 15,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ยินดีต้อนรับกลับมา 👋',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            _user?.name ?? 'สมาชิก มีระดับ',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    // API Status Badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _isSystemHealthy
+                              ? Colors.greenAccent
+                              : Colors.orangeAccent,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: _isSystemHealthy
+                                  ? Colors.greenAccent
+                                  : Colors.orangeAccent,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            _isSystemHealthy ? 'API ONLINE' : 'API OFFLINE',
+                            style: TextStyle(
+                              color: _isSystemHealthy
+                                  ? Colors.greenAccent
+                                  : Colors.orangeAccent,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                const Divider(color: Colors.white24, height: 1),
+                const SizedBox(height: 14),
+
+                // Device Info Details Bar
+                Row(
+                  children: [
+                    Icon(
+                      _deviceDetails?.icon ?? Icons.devices_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'อุปกรณ์ปัจจุบัน: ${_deviceDetails?.modelName ?? 'กำลังตรวจสอบ...'}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Feed Header Title
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                '📍 ฟีดการ Check-in ล่าสุด',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Chip(
+                label: Text('${_checkIns.length} รายการ'),
+                backgroundColor:
+                    Theme.of(context).colorScheme.primaryContainer,
+                labelStyle: const TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // ==========================================
+          // IN-PLACE FEED CONTENT OR LOADING SPINNER
+          // ==========================================
+          if (_loadingFeed)
+            Container(
+              padding: const EdgeInsets.all(40),
+              child: const Column(
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text(
+                    'กำลังโหลดข้อมูลการ Check-in จาก API...',
+                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                  ),
+                ],
+              ),
+            )
+          else if (_checkIns.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(32),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.location_off_outlined,
+                      size: 64, color: Colors.grey),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'ยังไม่มีรายการ Check-in ในขณะนี้',
+                    style: TextStyle(color: Colors.grey, fontSize: 15),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() => _loadingFeed = true);
+                      _loadCheckIns();
+                    },
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('รีเฟรชลองใหม่อีกครั้ง'),
+                  ),
+                ],
+              ),
+            )
+          else
+            ..._checkIns.map((item) {
+              final isOwner = _user != null && item.user?.id == _user!.id;
+              final formattedDate = item.createdAt != null
+                  ? '${item.createdAt!.day}/${item.createdAt!.month}/${item.createdAt!.year} ${item.createdAt!.hour.toString().padLeft(2, '0')}:${item.createdAt!.minute.toString().padLeft(2, '0')}'
+                  : '';
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 16),
+                elevation: 3,
+                shadowColor: Colors.black26,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 20,
+                            backgroundImage: (item.user?.profileImage != null &&
+                                    item.user!.profileImage!.isNotEmpty)
+                                ? NetworkImage(item.user!.profileImage!)
+                                : null,
+                            child: (item.user?.profileImage == null ||
+                                    item.user!.profileImage!.isEmpty)
+                                ? Text(
+                                    (item.user?.name?.isNotEmpty ?? false)
+                                        ? item.user!.name![0].toUpperCase()
+                                        : '?',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      item.user?.name ?? 'สมาชิกทั่วไป',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    if (isOwner) ...[
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: Colors.deepPurple.shade100,
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                        ),
+                                        child: const Text(
+                                          'คุณ',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.deepPurple,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                if (formattedDate.isNotEmpty)
+                                  Text(
+                                    formattedDate,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          if (isOwner)
+                            PopupMenuButton<String>(
+                              onSelected: (val) {
+                                if (val == 'edit') {
+                                  _showEditCheckInDialog(item);
+                                } else if (val == 'delete') {
+                                  _deleteCheckIn(item.id);
+                                }
+                              },
+                              itemBuilder: (ctx) => [
+                                const PopupMenuItem(
+                                  value: 'edit',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.edit, size: 18),
+                                      SizedBox(width: 8),
+                                      Text('แก้ไข'),
+                                    ],
+                                  ),
+                                ),
+                                const PopupMenuItem(
+                                  value: 'delete',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.delete,
+                                          size: 18, color: Colors.red),
+                                      SizedBox(width: 8),
+                                      Text('ลบ',
+                                          style: TextStyle(color: Colors.red)),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHigh,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.place_rounded,
+                                color: Colors.redAccent, size: 20),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                item.locationName ?? 'ไม่ได้ระบุชื่อสถานที่',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '📍 Lat: ${item.lat} • Lng: ${item.lng}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontFamily: 'monospace',
+                              color: Colors.grey.shade700,
+                            ),
+                          ),
+                          // ==========================================
+                          // GOOGLE MAPS LINK BUTTON
+                          // ==========================================
+                          InkWell(
+                            onTap: () => _openGoogleMaps(item.lat, item.lng),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.map_rounded,
+                                      size: 16, color: Colors.blueAccent),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'ดูบน Google Maps',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blueAccent.shade700,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (item.description != null &&
+                          item.description!.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          item.description!,
+                          style: const TextStyle(fontSize: 14, height: 1.3),
+                        ),
+                      ],
+                      if (item.imageUrl != null &&
+                          item.imageUrl!.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Image.network(
+                            item.imageUrl!,
+                            width: double.infinity,
+                            height: 220,
+                            fit: BoxFit.cover,
+                            errorBuilder: (ctx, err, stack) => Container(
+                              height: 120,
+                              color: Colors.grey.shade200,
+                              alignment: Alignment.center,
+                              child: const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.broken_image_rounded,
+                                      color: Colors.grey),
+                                  SizedBox(height: 4),
+                                  Text('ไม่สามารถโหลดรูปภาพได้',
+                                      style: TextStyle(fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileTab() {
+    if (_loadingUser) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    final theme = Theme.of(context);
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _loadProfile();
+        await _loadDeviceInfo();
+      },
+      child: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          // ==========================================
+          // PREMIUM PROFILE CARD
+          // ==========================================
+          Card(
+            elevation: 4,
+            shadowColor: Colors.deepPurple.withValues(alpha: 0.2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
                 children: [
                   CircleAvatar(
-                    radius: 48,
-                    backgroundColor:
-                        Theme.of(context).colorScheme.primaryContainer,
-                    child: Text(
-                      (_user?.name?.isNotEmpty ?? false)
-                          ? _user!.name![0].toUpperCase()
-                          : '?',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
+                    radius: 52,
+                    backgroundImage: (_user?.avatarUrl != null &&
+                            _user!.avatarUrl!.isNotEmpty)
+                        ? NetworkImage(_user!.avatarUrl!)
+                        : null,
+                    backgroundColor: theme.colorScheme.primaryContainer,
+                    child: (_user?.avatarUrl == null ||
+                            _user!.avatarUrl!.isEmpty)
+                        ? Text(
+                            (_user?.name?.isNotEmpty ?? false)
+                                ? _user!.name![0].toUpperCase()
+                                : '?',
+                            style: theme.textTheme.headlineLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: theme.colorScheme.primary,
+                            ),
+                          )
+                        : null,
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    _user?.name ?? 'สวัสดี!',
+                    _user?.name ?? 'ผู้ใช้งาน',
                     textAlign: TextAlign.center,
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(fontWeight: FontWeight.bold),
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 22,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     _user?.email ?? '',
                     textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.outline,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (_user != null && !_user!.isVerified)
-                    Chip(
-                      avatar: Icon(Icons.warning_amber_rounded,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.error),
-                      label: const Text('ยังไม่ได้ยืนยันอีเมล'),
-                    )
-                  else
-                    Chip(
-                      avatar: Icon(Icons.verified_outlined,
-                          size: 18,
-                          color: Theme.of(context).colorScheme.primary),
-                      label: const Text('ยืนยันอีเมลแล้ว'),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.outline,
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  _user != null && !_user!.isVerified
+                      ? Chip(
+                          avatar: Icon(Icons.warning_amber_rounded,
+                              size: 18, color: theme.colorScheme.error),
+                          label: const Text('ยังไม่ได้ยืนยันอีเมล OTP'),
+                          backgroundColor: Colors.red.withValues(alpha: 0.1),
+                        )
+                      : Chip(
+                          avatar: const Icon(Icons.verified_rounded,
+                              size: 18, color: Color(0xFF10B981)),
+                          label: const Text(
+                              'ยืนยันตัวตนเรียบร้อยแล้ว (OTP Verified)'),
+                          backgroundColor:
+                              const Color(0xFF10B981).withValues(alpha: 0.1),
+                        ),
                 ],
               ),
             ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ==========================================
+          // PREMIUM ACTIVE DEVICE CARD (ลักษณะเฉพาะตัวอุปกรณ์)
+          // ==========================================
+          if (_deviceDetails != null)
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: _deviceDetails!.color.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            _deviceDetails!.icon,
+                            color: _deviceDetails!.color,
+                            size: 26,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                '📱 อุปกรณ์ที่คุณกำลังใช้งาน',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _deviceDetails!.modelName,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(height: 1),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'แพลตฟอร์ม: ${_deviceDetails!.platformName}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.outline,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: _deviceDetails!.color.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'Active Machine',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: _deviceDetails!.color,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 20),
+
+          // ==========================================
+          // ACCOUNT SETTINGS LIST
+          // ==========================================
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.edit_outlined,
+                      color: Colors.deepPurple),
+                  title: const Text('แก้ไขชื่อผู้ใช้'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: _showEditProfileDialog,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.lock_reset_outlined,
+                      color: Colors.indigo),
+                  title: const Text('เปลี่ยนรหัสผ่าน'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: _showChangePasswordDialog,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.security_rounded,
+                      color: Colors.blueAccent),
+                  title: const Text('จัดการสิทธิ์อุปกรณ์ (Permissions)'),
+                  subtitle: const Text(' Location, Camera & Storage'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => PermissionService.showPermissionDialog(context),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.dns_outlined, color: Colors.green),
+                  title: const Text('สถานะการเชื่อมต่อ API Server'),
+                  subtitle:
+                      Text(_isSystemHealthy ? 'ONLINE (200 OK)' : 'OFFLINE'),
+                  trailing: Icon(
+                    Icons.circle,
+                    size: 12,
+                    color: _isSystemHealthy ? Colors.green : Colors.red,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          // Logout and Delete Account
+          Card(
+            elevation: 1,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.logout_rounded,
+                      color: Colors.orangeAccent),
+                  title: const Text(
+                    'ออกจากระบบ',
+                    style: TextStyle(
+                        color: Colors.orangeAccent,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  onTap: _logout,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.delete_forever_rounded,
+                      color: Colors.red),
+                  title: const Text(
+                    'ลบบัญชีผู้ใช้ถาวร',
+                    style: TextStyle(
+                        color: Colors.red, fontWeight: FontWeight.bold),
+                  ),
+                  onTap: _deleteAccount,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
     );
   }
 }
