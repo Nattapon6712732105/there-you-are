@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/permission_service.dart';
 import 'login_screen.dart';
 import 'register_screen.dart';
+import '../my_home_page.dart';
 
 /// หน้าก่อนเข้าสู่ระบบ (Welcome / Landing Screen)
 /// ชื่อแอปพลิเคชัน: There You Are
@@ -28,18 +29,10 @@ class WelcomeScreen extends StatelessWidget {
                   // 1. HERO SECTION (โลโก้ + ชื่อแอป + คำโปรย)
                   // ==========================================
                   Center(
-                    child: Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer
-                            .withValues(alpha: 0.5),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.location_on_rounded,
-                        size: 72,
-                        color: theme.colorScheme.primary,
-                      ),
+                    child: Image.asset(
+                      'assets/img/logo.png',
+                      height: 140,
+                      fit: BoxFit.contain,
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -69,7 +62,7 @@ class WelcomeScreen extends StatelessWidget {
                   // ==========================================
                   const _FeatureCard(
                     icon: Icons.my_location_rounded,
-                    iconColor: Colors.deepPurple,
+                    iconColor: Color(0xFF0F766E),
                     title: 'Check-in แม่นยำ',
                     subtitle:
                         'บันทึกพิกัด Latitude & Longitude พร้อมรูปภาพความประทับใจ',
@@ -169,7 +162,22 @@ class WelcomeScreen extends StatelessWidget {
                     ),
                   ),
 
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 12),
+
+                  TextButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const MyHomePage()),
+                      );
+                    },
+                    icon: const Icon(Icons.shield_outlined, size: 16),
+                    label: const Text(
+                      'เงื่อนไขการใช้งาน & นโยบาย PDPA',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
 
                   Text(
                     'There You Are v1.0.0 • Powered by Next.js & Flutter',

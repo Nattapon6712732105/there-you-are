@@ -141,7 +141,7 @@ class PermissionService {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(
           children: [
-            Icon(Icons.security_rounded, color: Colors.deepPurple, size: 28),
+            Icon(Icons.security_rounded, color: Color(0xFF0F766E), size: 28),
             SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -168,13 +168,6 @@ class PermissionService {
             ),
             SizedBox(height: 10),
             _PermissionItem(
-              icon: Icons.camera_alt_rounded,
-              color: Color(0xFF10B981),
-              title: 'กล้องถ่ายรูป (Camera)',
-              subtitle: 'เพื่อถ่ายภาพสถานที่เมื่อทำการเช็คอินสด',
-            ),
-            SizedBox(height: 10),
-            _PermissionItem(
               icon: Icons.photo_library_rounded,
               color: Colors.amber,
               title: 'คลังภาพ (Photos & Storage)',
@@ -198,7 +191,6 @@ class PermissionService {
     if (result == true) {
       final statuses = await [
         Permission.location,
-        Permission.camera,
         Permission.photos,
       ].request();
 

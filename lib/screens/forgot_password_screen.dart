@@ -136,6 +136,46 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     },
                   ),
                   if (_otpSent) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.amber.shade300),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.mark_as_unread_outlined,
+                              color: Colors.amber.shade900, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '📬 หากไม่พบอีเมลในกล่องข้อความหลัก (Inbox)',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.amber.shade900,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'กรุณาตรวจสอบในโฟลเดอร์ "จดหมายขยะ" (Spam / Junk) หรือค้นหาชื่อผู้ส่ง "There You Are"',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.amber.shade900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _otpCtrl,

@@ -143,7 +143,14 @@ class ApiService {
   Future<void> saveToken(String token) =>
       _storage.write(key: _tokenKey, value: token);
 
-  Future<void> clearToken() => _storage.delete(key: _tokenKey);
+  Future<void> clearToken() async {
+    try {
+      await _storage.delete(key: _tokenKey);
+      await _storage.deleteAll();
+    } catch (e) {
+      debugPrint('[ApiService] clearToken error: $e');
+    }
+  }
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',

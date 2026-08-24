@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_service.dart';
+import '../my_home_page.dart';
 import 'home_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -20,6 +21,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool _obscure = true;
   bool _loading = false;
+  bool _acceptedPdpa = false;
 
   bool _otpSent = false;
   late String _pendingEmail;
@@ -35,10 +37,68 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
+  Future<void> _showPdpaDialog() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const MyHomePage()),
+    );
+    if (mounted) {
+      setState(() => _acceptedPdpa = true);
+    }
+  }
+
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
+
+    if (!_acceptedPdpa) {
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.shield_outlined, color: Color(0xFF0F766E), size: 26),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'เงื่อนไขการใช้งาน & PDPA',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: const Text(
+            'กรุณาอ่านและยอมรับเงื่อนไขการใช้งาน รวมถึงนโยบายการคุ้มครองข้อมูลส่วนบุคคล (PDPA) ก่อนทำการสมัครสมาชิก',
+            style: TextStyle(fontSize: 13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ยกเลิก'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              icon: const Icon(Icons.description_outlined, size: 16),
+              label: const Text('อ่านและยอมรับเงื่อนไข'),
+            ),
+          ],
+        ),
+      );
+
+      if (result == true) {
+        if (!mounted) return;
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const MyHomePage()),
+        );
+        if (!mounted) return;
+        setState(() => _acceptedPdpa = true);
+      } else {
+        return;
+      }
+    }
+
     setState(() => _loading = true);
     try {
+      await _api.clearToken();
       await _api.register(
         email: _emailCtrl.text.trim(),
         name: _nameCtrl.text.trim(),
@@ -55,9 +115,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
       );
     } on ApiException catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-      );
+      if (!mounted) return;
+      final msg = e.message.toLowerCase();
+      if (e.statusCode == 409 || msg.contains('already exists') || msg.contains('มีในระบบ') || msg.contains('ซ้ำ')) {
+        // If email already exists, switch to OTP verification step
+        setState(() {
+          _pendingEmail = _emailCtrl.text.trim();
+          _otpSent = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${e.message} — สลับไปหน้ากรอก OTP เพื่อยืนยันยันตัวตน'),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -197,7 +273,59 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 v != _passwordCtrl.text ? 'รหัสผ่านไม่ตรงกัน' : null,
             onFieldSubmitted: (_) => _loading ? null : _register(),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+          InkWell(
+            onTap: _showPdpaDialog,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: _acceptedPdpa
+                    ? const Color(0xFF0F766E).withValues(alpha: 0.08)
+                    : Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: _acceptedPdpa
+                      ? const Color(0xFF0F766E)
+                      : Colors.grey.shade300,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Checkbox(
+                    activeColor: const Color(0xFF0F766E),
+                    value: _acceptedPdpa,
+                    onChanged: (val) {
+                      if (val == true) {
+                        _showPdpaDialog();
+                      } else {
+                        setState(() => _acceptedPdpa = false);
+                      }
+                    },
+                  ),
+                  Expanded(
+                    child: RichText(
+                      text: const TextSpan(
+                        style: TextStyle(fontSize: 12, color: Colors.black87),
+                        children: [
+                          TextSpan(text: 'ข้าพเจ้าได้อ่านและยอมรับ '),
+                          TextSpan(
+                            text: 'เงื่อนไขการใช้งาน & นโยบาย PDPA',
+                            style: TextStyle(
+                              color: Color(0xFF0F766E),
+                              fontWeight: FontWeight.bold,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
           FilledButton(
             onPressed: _loading ? null : _register,
             style: FilledButton.styleFrom(
@@ -227,7 +355,47 @@ class _RegisterScreenState extends State<RegisterScreen> {
           textAlign: TextAlign.center,
           style: Theme.of(context).textTheme.bodyLarge,
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.amber.shade50,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.amber.shade300),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.mark_as_unread_outlined,
+                  color: Colors.amber.shade900, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '📬 หากไม่พบอีเมลในกล่องข้อความหลัก (Inbox)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.amber.shade900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'กรุณาตรวจสอบในโฟลเดอร์ "จดหมายขยะ" (Spam / Junk) หรือค้นหาชื่อผู้ส่ง "There You Are"',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.amber.shade900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
         TextField(
           controller: _otpCtrl,
           keyboardType: TextInputType.number,
@@ -245,7 +413,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           onSubmitted: (_) => _loading ? null : _verifyOtp(),
         ),
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
         FilledButton(
           onPressed: _loading ? null : _verifyOtp,
           style: FilledButton.styleFrom(

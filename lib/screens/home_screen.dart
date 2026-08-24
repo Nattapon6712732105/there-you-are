@@ -1,15 +1,23 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_service.dart';
 import '../services/device_service.dart';
 import '../services/permission_service.dart';
+import '../my_home_page.dart';
 import 'welcome_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final bool autoPromptPermission;
+
+  const HomeScreen({
+    super.key,
+    this.autoPromptPermission = true,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -30,13 +38,30 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _initData();
+    if (widget.autoPromptPermission) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _checkAndPromptHardwarePermissions();
+      });
+    }
+  }
+
+  Future<void> _checkAndPromptHardwarePermissions() async {
+    if (!mounted) return;
+    await PermissionService.showPermissionDialog(context);
   }
 
   void _initData() {
-    _loadDeviceInfo();
-    _checkHealthStatus();
+    // 1. Priority 1: Load Profile & Feed immediately for fast first render
     _loadProfile();
     _loadCheckIns();
+
+    // 2. Priority 2: Defer background tasks slightly to unblock main UI thread
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _loadDeviceInfo();
+        _checkHealthStatus();
+      }
+    });
   }
 
   Future<void> _loadDeviceInfo() async {
@@ -201,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               duration: const Duration(milliseconds: 200),
                               decoration: BoxDecoration(
                                 color: isSelected
-                                    ? Colors.deepPurple
+                                    ? const Color(0xFF0F766E)
                                     : Colors.redAccent,
                                 shape: BoxShape.circle,
                                 border:
@@ -280,9 +305,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Text(
                                         selectedItem!.locationName ??
                                             'ไม่ได้ระบุชื่อสถานที่',
-                                        style: TextStyle(
+                                        style: const TextStyle(
                                           fontSize: 12,
-                                          color: Colors.deepPurple.shade700,
+                                          color: Color(0xFF0F766E),
                                           fontWeight: FontWeight.w600,
                                         ),
                                       ),
@@ -387,16 +412,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       await _api.deleteAccount(token: token);
+      await _api.clearToken();
       if (!mounted) return;
       messenger.showSnackBar(
         const SnackBar(content: Text('ลบบัญชีผู้ใช้เรียบร้อยแล้ว')),
       );
       _navigateToLogin();
     } on ApiException catch (e) {
+      await _api.clearToken();
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('ลบบัญชีแล้ว: ${e.message}'),
+          backgroundColor: Colors.orange.shade800,
+        ),
       );
+      _navigateToLogin();
     }
   }
 
@@ -453,13 +484,15 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Row(
                 children: [
                   Icon(Icons.add_location_alt_rounded,
-                      color: Colors.deepPurple),
+                      color: Color(0xFF0F766E)),
                   SizedBox(width: 8),
                   Text('สร้างการ Check-in ใหม่'),
                 ],
               ),
-              content: SingleChildScrollView(
-                child: Form(
+              content: SizedBox(
+                width: 450,
+                child: SingleChildScrollView(
+                  child: Form(
                   key: formKey,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -482,14 +515,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           const Row(
                             children: [
                               Icon(Icons.my_location_rounded,
-                                  size: 16, color: Colors.deepPurple),
+                                  size: 16, color: Color(0xFF0F766E)),
                               SizedBox(width: 4),
                               Text(
                                 'พิกัด GPS ปัจจุบัน',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.deepPurple,
+                                  color: Color(0xFF0F766E),
                                 ),
                               ),
                             ],
@@ -534,7 +567,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     )
                                   else
                                     const Icon(Icons.refresh_rounded,
-                                        size: 14, color: Colors.deepPurple),
+                                        size: 14, color: Color(0xFF0F766E)),
                                   const SizedBox(width: 4),
                                   Text(
                                     fetchingLocation
@@ -542,7 +575,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                         : 'ดึงพิกัดสด',
                                     style: const TextStyle(
                                       fontSize: 12,
-                                      color: Colors.deepPurple,
+                                      color: Color(0xFF0F766E),
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
@@ -599,18 +632,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      TextFormField(
-                        controller: imgCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'URL รูปภาพ (ถ้ามี)',
-                          prefixIcon: Icon(Icons.image_outlined),
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
+                      _ImagePickerField(controller: imgCtrl),
                     ],
                   ),
                 ),
               ),
+            ),
               actions: [
                 TextButton(
                   onPressed: saving ? null : () => dialogNavigator.pop(),
@@ -661,6 +688,115 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showLocationMapModal(CheckIn item) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 500, maxHeight: 480),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.place_rounded, color: Color(0xFF0F766E)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      item.locationName ?? 'ตำแหน่งบนแผนที่',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                  ),
+                ],
+              ),
+              const Divider(),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: FlutterMap(
+                    options: MapOptions(
+                      initialCenter: LatLng(item.lat, item.lng),
+                      initialZoom: 15,
+                    ),
+                    children: [
+                      TileLayer(
+                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'com.example.there_you_are',
+                      ),
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: LatLng(item.lat, item.lng),
+                            width: 48,
+                            height: 48,
+                            child: const Icon(
+                              Icons.location_on_rounded,
+                              color: Colors.redAccent,
+                              size: 44,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      '📍 ${item.lat.toStringAsFixed(4)}, ${item.lng.toStringAsFixed(4)}',
+                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.grey),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.of(ctx).pop();
+                          _openGoogleMaps(item.lat, item.lng);
+                        },
+                        icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                        label: const Text('Google Maps', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      FilledButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        child: const Text('ปิด', style: TextStyle(fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
   Future<void> _showEditCheckInDialog(CheckIn item) async {
     final token = await _api.getToken();
     if (token == null) {
@@ -690,13 +826,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             title: const Row(
               children: [
-                Icon(Icons.edit_location_alt_rounded, color: Colors.deepPurple),
+                Icon(Icons.edit_location_alt_rounded, color: Color(0xFF0F766E)),
                 SizedBox(width: 8),
                 Text('แก้ไขการ Check-in'),
               ],
             ),
-            content: SingleChildScrollView(
-              child: Form(
+            content: SizedBox(
+              width: 450,
+              child: SingleChildScrollView(
+                child: Form(
                 key: formKey,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -718,14 +856,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         const Row(
                           children: [
                             Icon(Icons.my_location_rounded,
-                                size: 16, color: Colors.deepPurple),
+                                size: 16, color: Color(0xFF0F766E)),
                             SizedBox(width: 4),
                             Text(
                               'พิกัด GPS',
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.deepPurple,
+                                color: Color(0xFF0F766E),
                               ),
                             ),
                           ],
@@ -770,7 +908,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   )
                                 else
                                   const Icon(Icons.refresh_rounded,
-                                      size: 14, color: Colors.deepPurple),
+                                      size: 14, color: Color(0xFF0F766E)),
                                 const SizedBox(width: 4),
                                 Text(
                                   fetchingLocation
@@ -778,7 +916,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       : 'ใช้ตำแหน่งปัจจุบัน',
                                   style: const TextStyle(
                                     fontSize: 12,
-                                    color: Colors.deepPurple,
+                                    color: Color(0xFF0F766E),
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -826,17 +964,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    TextFormField(
-                      controller: imgCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'URL รูปภาพ',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
+                    _ImagePickerField(controller: imgCtrl),
                   ],
                 ),
               ),
             ),
+          ),
             actions: [
               TextButton(
                 onPressed: saving ? null : () => dialogNavigator.pop(),
@@ -1098,20 +1231,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                shape: BoxShape.circle,
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.asset(
+                'assets/img/app_icon.png',
+                width: 32,
+                height: 32,
+                fit: BoxFit.contain,
               ),
-              child: const Icon(Icons.location_on_rounded,
-                  color: Colors.deepPurple, size: 20),
             ),
             const SizedBox(width: 8),
             const Text(
@@ -1220,10 +1351,10 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              gradient: LinearGradient(
+              gradient: const LinearGradient(
                 colors: [
-                  Colors.deepPurple.shade700,
-                  Colors.indigo.shade600,
+                  Color(0xFF0F766E),
+                  Color(0xFF047857),
                 ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -1231,7 +1362,7 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: BorderRadius.circular(24),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.deepPurple.withValues(alpha: 0.3),
+                  color: const Color(0xFF0F766E).withValues(alpha: 0.25),
                   blurRadius: 15,
                   offset: const Offset(0, 6),
                 ),
@@ -1361,14 +1492,14 @@ class _HomeScreenState extends State<HomeScreen> {
               if (_checkIns.isNotEmpty)
                 ActionChip(
                   avatar: const Icon(Icons.map_rounded,
-                      size: 14, color: Colors.deepPurple),
+                      size: 14, color: Color(0xFF0F766E)),
                   label: Text('ดูแผนที่รวม (${_checkIns.length})',
                       style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
-                          color: Colors.deepPurple)),
+                          color: Color(0xFF0F766E))),
                   onPressed: _showAllCheckInsMapDialog,
-                  backgroundColor: Colors.deepPurple.shade50,
+                  backgroundColor: const Color(0xFF0F766E).withValues(alpha: 0.1),
                   visualDensity: VisualDensity.compact,
                 )
               else
@@ -1551,41 +1682,44 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 14),
+                      // ==========================================
+                      // LOCATION HEADER & GOOGLE MAPS LINK
+                      // ==========================================
                       Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHigh,
+                          color: const Color(0xFF0F766E).withValues(alpha: 0.08),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
                             const Icon(Icons.place_rounded,
-                                color: Colors.redAccent, size: 20),
+                                color: Color(0xFF0F766E), size: 20),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
                                 item.locationName ?? 'ไม่ได้ระบุชื่อสถานที่',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  fontSize: 15,
+                                  fontSize: 14,
                                 ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Expanded(
                             child: Text(
-                              '📍 Lat: ${item.lat} • Lng: ${item.lng}',
+                              '📍 Lat: ${item.lat.toStringAsFixed(4)} • Lng: ${item.lng.toStringAsFixed(4)}',
                               style: TextStyle(
-                                fontSize: 12,
+                                fontSize: 11,
                                 fontFamily: 'monospace',
                                 color: Colors.grey.shade700,
                               ),
@@ -1594,9 +1728,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          // ==========================================
-                          // GOOGLE MAPS LINK BUTTON
-                          // ==========================================
                           InkWell(
                             onTap: () => _openGoogleMaps(item.lat, item.lng),
                             borderRadius: BorderRadius.circular(8),
@@ -1607,12 +1738,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   const Icon(Icons.map_rounded,
-                                      size: 16, color: Colors.blueAccent),
+                                      size: 14, color: Colors.blueAccent),
                                   const SizedBox(width: 4),
                                   Text(
-                                    'ดูบน Google Maps',
+                                    'Google Maps',
                                     style: TextStyle(
-                                      fontSize: 12,
+                                      fontSize: 11,
                                       fontWeight: FontWeight.bold,
                                       color: Colors.blueAccent.shade700,
                                       decoration: TextDecoration.underline,
@@ -1625,47 +1756,78 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                       // ==========================================
-                      // EMBEDDED INTERACTIVE MAP (WEB & APP)
+                      // INLINE MAP PREVIEW (DIRECTLY VISIBLE ON CARD)
                       // ==========================================
                       const SizedBox(height: 10),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: Container(
-                          height: 170,
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: FlutterMap(
-                            options: MapOptions(
-                              initialCenter: LatLng(item.lat, item.lng),
-                              initialZoom: 14,
-                              interactionOptions: const InteractionOptions(
-                                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-                              ),
+                        child: InkWell(
+                          onTap: () => _showLocationMapModal(item),
+                          child: Container(
+                            height: 160,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade300),
+                              borderRadius: BorderRadius.circular(16),
                             ),
-                            children: [
-                              TileLayer(
-                                urlTemplate:
-                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                userAgentPackageName: 'com.example.there_you_are',
-                              ),
-                              MarkerLayer(
-                                markers: [
-                                  Marker(
-                                    point: LatLng(item.lat, item.lng),
-                                    width: 40,
-                                    height: 40,
-                                    child: const Icon(
-                                      Icons.location_on_rounded,
-                                      color: Colors.redAccent,
-                                      size: 38,
+                            child: Stack(
+                              children: [
+                                ExcludeSemantics(
+                                  child: FlutterMap(
+                                    options: MapOptions(
+                                      initialCenter: LatLng(item.lat, item.lng),
+                                      initialZoom: 14,
+                                      interactionOptions: const InteractionOptions(
+                                        flags: InteractiveFlag.none,
+                                      ),
+                                    ),
+                                    children: [
+                                      TileLayer(
+                                        urlTemplate:
+                                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                        userAgentPackageName: 'com.example.there_you_are',
+                                      ),
+                                      MarkerLayer(
+                                        markers: [
+                                          Marker(
+                                            point: LatLng(item.lat, item.lng),
+                                            width: 38,
+                                            height: 38,
+                                            child: const Icon(
+                                              Icons.location_on_rounded,
+                                              color: Colors.redAccent,
+                                              size: 36,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Positioned(
+                                  right: 8,
+                                  bottom: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(alpha: 0.65),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.touch_app_rounded, color: Colors.white, size: 12),
+                                        SizedBox(width: 4),
+                                        Text(
+                                          'แตะเพื่อเปิดแผนที่ขยาย',
+                                          style: TextStyle(color: Colors.white, fontSize: 11),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
-                            ],
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -1682,27 +1844,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 12),
                         ClipRRect(
                           borderRadius: BorderRadius.circular(16),
-                          child: Image.network(
-                            item.imageUrl!,
-                            width: double.infinity,
-                            height: 220,
-                            fit: BoxFit.cover,
-                            errorBuilder: (ctx, err, stack) => Container(
-                              height: 120,
-                              color: Colors.grey.shade200,
-                              alignment: Alignment.center,
-                              child: const Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.broken_image_rounded,
-                                      color: Colors.grey),
-                                  SizedBox(height: 4),
-                                  Text('ไม่สามารถโหลดรูปภาพได้',
-                                      style: TextStyle(fontSize: 12)),
-                                ],
-                              ),
-                            ),
-                          ),
+                          child: _buildImageWidget(item.imageUrl!, height: 220),
                         ),
                       ],
                     ],
@@ -1734,7 +1876,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // ==========================================
           Card(
             elevation: 4,
-            shadowColor: Colors.deepPurple.withValues(alpha: 0.2),
+            shadowColor: const Color(0xFF0F766E).withValues(alpha: 0.15),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
@@ -1906,7 +2048,7 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 ListTile(
                   leading: const Icon(Icons.edit_outlined,
-                      color: Colors.deepPurple),
+                      color: Color(0xFF0F766E)),
                   title: const Text('แก้ไขชื่อผู้ใช้'),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: _showEditProfileDialog,
@@ -1927,6 +2069,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   subtitle: const Text(' Location, Camera & Storage'),
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => PermissionService.showPermissionDialog(context),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.shield_outlined,
+                      color: Color(0xFF0F766E)),
+                  title: const Text('เงื่อนไขการใช้งาน & นโยบาย PDPA'),
+                  subtitle: const Text('รายงานการคุ้มครองข้อมูลส่วนบุคคล พ.ร.บ. 2562'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const MyHomePage()),
+                    );
+                  },
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -1982,6 +2137,173 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+}
+
+Widget _buildImageWidget(String imageUrl, {double height = 220, BoxFit fit = BoxFit.cover}) {
+  if (imageUrl.isEmpty) return const SizedBox.shrink();
+
+  if (imageUrl.startsWith('data:image/') || imageUrl.startsWith('data:application/')) {
+    try {
+      final base64Data = imageUrl.split(',').last;
+      final bytes = base64Decode(base64Data);
+      return Image.memory(
+        bytes,
+        height: height,
+        fit: fit,
+        errorBuilder: (ctx, err, stack) => _buildImageErrorWidget(),
+      );
+    } catch (_) {
+      return _buildImageErrorWidget();
+    }
+  } else {
+    return Image.network(
+      imageUrl,
+      height: height,
+      fit: fit,
+      errorBuilder: (ctx, err, stack) => _buildImageErrorWidget(),
+    );
+  }
+}
+
+Widget _buildImageErrorWidget() {
+  return Container(
+    height: 120,
+    color: Colors.grey.shade200,
+    alignment: Alignment.center,
+    child: const Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.broken_image_rounded, color: Colors.grey),
+        SizedBox(height: 4),
+        Text('ไม่สามารถโหลดรูปภาพได้', style: TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
+    ),
+  );
+}
+
+class _ImagePickerField extends StatefulWidget {
+  final TextEditingController controller;
+
+  const _ImagePickerField({
+    required this.controller,
+  });
+
+  @override
+  State<_ImagePickerField> createState() => _ImagePickerFieldState();
+}
+
+class _ImagePickerFieldState extends State<_ImagePickerField> {
+  bool _showUrlInput = false;
+
+  Future<void> _pick(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final XFile? file = await picker.pickImage(
+        source: source,
+        maxWidth: 600,
+        maxHeight: 600,
+        imageQuality: 65,
+      );
+      if (file != null) {
+        final bytes = await file.readAsBytes();
+        final base64Str = base64Encode(bytes);
+        final mime = file.name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+        setState(() {
+          widget.controller.text = 'data:$mime;base64,$base64Str';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('ไม่สามารถเลือกรูปภาพได้: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasImage = widget.controller.text.isNotEmpty;
+    final primaryColor = Theme.of(context).colorScheme.primary;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'รูปภาพประกอบ (เลือกจากเครื่อง หรือใส่ URL)',
+          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+        ),
+        const SizedBox(height: 8),
+        if (hasImage) ...[
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  height: 160,
+                  width: double.infinity,
+                  color: Colors.grey.shade100,
+                  child: _buildImageWidget(widget.controller.text, height: 160),
+                ),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: CircleAvatar(
+                  backgroundColor: Colors.black.withValues(alpha: 0.6),
+                  radius: 18,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    icon: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                    onPressed: () {
+                      setState(() {
+                        widget.controller.clear();
+                      });
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
+        OutlinedButton.icon(
+          onPressed: () => _pick(ImageSource.gallery),
+          icon: const Icon(Icons.photo_library_outlined, size: 18),
+          label: const Text('เลือกรูปภาพจากคลังภาพ (Gallery)'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: primaryColor,
+            side: BorderSide(color: primaryColor.withValues(alpha: 0.5)),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+        ),
+        const SizedBox(height: 6),
+        GestureDetector(
+          onTap: () => setState(() => _showUrlInput = !_showUrlInput),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              _showUrlInput ? 'ซ่อนช่องระบุ URL' : 'หรือวาง URL รูปภาพแทน',
+              style: TextStyle(fontSize: 12, color: primaryColor, decoration: TextDecoration.underline),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+        if (_showUrlInput) ...[
+          const SizedBox(height: 6),
+          TextFormField(
+            controller: widget.controller,
+            decoration: const InputDecoration(
+              hintText: 'https://example.com/image.jpg',
+              prefixIcon: Icon(Icons.link_rounded),
+              isDense: true,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
+      ],
     );
   }
 }
