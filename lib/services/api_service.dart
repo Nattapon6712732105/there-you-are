@@ -37,7 +37,89 @@ class User {
       name: name.isEmpty ? null : name,
       email: (json['email'] ?? '') as String,
       isVerified: json['isVerified'] == true || json['is_verified'] == true,
-      avatarUrl: json['avatarUrl'] as String?,
+      avatarUrl: (json['avatarUrl'] ?? json['profileImage']) as String?,
+    );
+  }
+}
+
+class CheckInUser {
+  final int? id;
+  final String? name;
+  final String? profileImage;
+
+  const CheckInUser({
+    this.id,
+    this.name,
+    this.profileImage,
+  });
+
+  factory CheckInUser.fromJson(Map<String, dynamic> json) {
+    return CheckInUser(
+      id: json['id'] as int?,
+      name: json['name'] as String?,
+      profileImage: (json['profileImage'] ?? json['avatarUrl']) as String?,
+    );
+  }
+}
+
+class CheckIn {
+  final int id;
+  final double lat;
+  final double lng;
+  final String? locationName;
+  final String? address;
+  final double? accuracy;
+  final String? description;
+  final String? imageUrl;
+  final DateTime? createdAt;
+  final CheckInUser? user;
+
+  const CheckIn({
+    required this.id,
+    required this.lat,
+    required this.lng,
+    this.locationName,
+    this.address,
+    this.accuracy,
+    this.description,
+    this.imageUrl,
+    this.createdAt,
+    this.user,
+  });
+
+  factory CheckIn.fromJson(Map<String, dynamic> json) {
+    double parseDouble(dynamic val) {
+      if (val == null) return 0.0;
+      if (val is num) return val.toDouble();
+      return double.tryParse(val.toString()) ?? 0.0;
+    }
+
+    double? parseOptDouble(dynamic val) {
+      if (val == null) return null;
+      if (val is num) return val.toDouble();
+      return double.tryParse(val.toString());
+    }
+
+    int parseId(dynamic val) {
+      if (val is int) return val;
+      return int.tryParse(val.toString()) ?? 0;
+    }
+
+    return CheckIn(
+      id: parseId(json['id']),
+      lat: parseDouble(json['lat']),
+      lng: parseDouble(json['lng']),
+      locationName: json['locationName']?.toString(),
+      address: json['address']?.toString(),
+      accuracy: parseOptDouble(json['accuracy']),
+      description: json['description']?.toString(),
+      imageUrl: json['imageUrl']?.toString(),
+      createdAt: json['createdAt'] != null
+          ? DateTime.tryParse(json['createdAt'].toString())
+          : null,
+      user: json['user'] is Map<String, dynamic>
+          ? CheckInUser.fromJson(json['user'] as Map<String, dynamic>)
+          : null,
     );
   }
 }
@@ -61,7 +143,14 @@ class ApiService {
   Future<void> saveToken(String token) =>
       _storage.write(key: _tokenKey, value: token);
 
-  Future<void> clearToken() => _storage.delete(key: _tokenKey);
+  Future<void> clearToken() async {
+    try {
+      await _storage.delete(key: _tokenKey);
+      await _storage.deleteAll();
+    } catch (e) {
+      debugPrint('[ApiService] clearToken error: $e');
+    }
+  }
 
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
@@ -87,24 +176,33 @@ class ApiService {
     try {
       switch (method) {
         case 'POST':
-          res = await _client.post(uri,
-              headers: headers ?? _headers,
-              body: body == null ? null : jsonEncode(body));
+          res = await _client
+              .post(uri,
+                  headers: headers ?? _headers,
+                  body: body == null ? null : jsonEncode(body))
+              .timeout(const Duration(seconds: 10));
           break;
         case 'PUT':
-          res = await _client.put(uri,
-              headers: headers ?? _headers,
-              body: body == null ? null : jsonEncode(body));
+          res = await _client
+              .put(uri,
+                  headers: headers ?? _headers,
+                  body: body == null ? null : jsonEncode(body))
+              .timeout(const Duration(seconds: 10));
           break;
         case 'DELETE':
-          res = await _client.delete(uri, headers: headers ?? _headers);
+          res = await _client
+              .delete(uri, headers: headers ?? _headers)
+              .timeout(const Duration(seconds: 10));
           break;
         default:
-          res = await _client.get(uri, headers: headers ?? _headers);
+          res = await _client
+              .get(uri, headers: headers ?? _headers)
+              .timeout(const Duration(seconds: 10));
       }
     } catch (e, st) {
       debugPrint('[API] connection error: $e\n$st');
-      throw ApiException('ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง');
+      throw ApiException(
+          'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ (หมดเวลาหรือขาดการเชื่อมต่อ)');
     }
 
     debugPrint('[API] <-- ${res.statusCode} $uri');
@@ -126,6 +224,16 @@ class ApiService {
       );
     }
     return data;
+  }
+
+  /// GET /api/health
+  Future<bool> checkHealth() async {
+    try {
+      final data = await _send('GET', Uri.parse('$baseUrl/api/health'));
+      return data['status'] == 'ok';
+    } catch (_) {
+      return false;
+    }
   }
 
   /// POST /api/auth/register
@@ -211,14 +319,16 @@ class ApiService {
     String? name,
     String? fname,
     String? lname,
+    String? avatarUrl,
   }) async {
+    final body = <String, dynamic>{};
+    if (name != null && name.isNotEmpty) body['name'] = name;
+    if (fname != null && fname.isNotEmpty) body['fname'] = fname;
+    if (lname != null && lname.isNotEmpty) body['lname'] = lname;
+    if (avatarUrl != null && avatarUrl.isNotEmpty) body['avatarUrl'] = avatarUrl;
+
     final data = await _send('PUT', Uri.parse('$baseUrl/api/auth/me'),
-        headers: _authHeaders(token),
-        body: {
-          'name': ?name,
-          'fname': ?fname,
-          'lname': ?lname,
-        });
+        headers: _authHeaders(token), body: body);
     return User.fromJson((data['user'] ?? data) as Map<String, dynamic>);
   }
 
@@ -236,16 +346,116 @@ class ApiService {
         });
   }
 
-  /// POST /api/auth/logout
-  Future<void> logout({String? token}) async {
+  /// DELETE /api/auth/me
+  Future<void> deleteAccount({required String token}) async {
     try {
       await _send(
-        'POST',
-        Uri.parse('$baseUrl/api/auth/logout'),
-        headers: token == null ? null : _authHeaders(token),
+        'DELETE',
+        Uri.parse('$baseUrl/api/auth/me'),
+        headers: _authHeaders(token),
       );
     } finally {
       await clearToken();
     }
+  }
+
+  /// POST /api/auth/logout
+  Future<void> logout({String? token}) async {
+    try {
+      if (token != null) {
+        await _send(
+          'POST',
+          Uri.parse('$baseUrl/api/auth/logout'),
+          headers: _authHeaders(token),
+        );
+      }
+    } finally {
+      await clearToken();
+    }
+  }
+
+  /// GET /api/checking
+  Future<List<CheckIn>> getCheckIns() async {
+    final data = await _send('GET', Uri.parse('$baseUrl/api/checking'));
+    final list = (data['checkins'] ?? data['data'] ?? []) as List;
+    return list
+        .map((e) => CheckIn.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// POST /api/checking
+  Future<CheckIn> createCheckIn({
+    required String token,
+    required double lat,
+    required double lng,
+    String? locationName,
+    String? description,
+    double? accuracy,
+    String? imageUrl,
+  }) async {
+    final body = <String, dynamic>{
+      'lat': lat,
+      'lng': lng,
+    };
+    if (locationName != null && locationName.isNotEmpty) {
+      body['locationName'] = locationName;
+    }
+    if (description != null && description.isNotEmpty) {
+      body['description'] = description;
+    }
+    if (accuracy != null) body['accuracy'] = accuracy;
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      body['imageUrl'] = imageUrl;
+    }
+
+    final data = await _send(
+      'POST',
+      Uri.parse('$baseUrl/api/checking'),
+      headers: _authHeaders(token),
+      body: body,
+    );
+    final checkinData =
+        (data['checkin'] ?? data['data'] ?? data) as Map<String, dynamic>;
+    return CheckIn.fromJson(checkinData);
+  }
+
+  /// PUT /api/checking
+  Future<CheckIn> updateCheckIn({
+    required String token,
+    required int id,
+    double? lat,
+    double? lng,
+    String? locationName,
+    String? description,
+    String? imageUrl,
+  }) async {
+    final body = <String, dynamic>{'id': id};
+    if (lat != null) body['lat'] = lat;
+    if (lng != null) body['lng'] = lng;
+    if (locationName != null) body['locationName'] = locationName;
+    if (description != null) body['description'] = description;
+    if (imageUrl != null) body['imageUrl'] = imageUrl;
+
+    final data = await _send(
+      'PUT',
+      Uri.parse('$baseUrl/api/checking'),
+      headers: _authHeaders(token),
+      body: body,
+    );
+    final checkinData =
+        (data['checkin'] ?? data['data'] ?? data) as Map<String, dynamic>;
+    return CheckIn.fromJson(checkinData);
+  }
+
+  /// DELETE /api/checking?id={id}
+  Future<void> deleteCheckIn({
+    required String token,
+    required int id,
+  }) async {
+    await _send(
+      'DELETE',
+      Uri.parse('$baseUrl/api/checking?id=$id'),
+      headers: _authHeaders(token),
+    );
   }
 }
