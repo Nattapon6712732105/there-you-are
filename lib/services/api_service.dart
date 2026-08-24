@@ -132,7 +132,15 @@ class AuthResult {
 }
 
 class ApiService {
-  static const baseUrl = 'https://where-am-i-silk.vercel.app';
+  static String get baseUrl {
+    if (kIsWeb) {
+      final origin = Uri.base.origin;
+      if (origin.startsWith('http')) {
+        return origin;
+      }
+    }
+    return 'https://where-am-i-silk.vercel.app';
+  }
   static const _tokenKey = 'auth_token';
 
   final http.Client _client = http.Client();
@@ -180,29 +188,33 @@ class ApiService {
               .post(uri,
                   headers: headers ?? _headers,
                   body: body == null ? null : jsonEncode(body))
-              .timeout(const Duration(seconds: 10));
+              .timeout(const Duration(seconds: 25));
           break;
         case 'PUT':
           res = await _client
               .put(uri,
                   headers: headers ?? _headers,
                   body: body == null ? null : jsonEncode(body))
-              .timeout(const Duration(seconds: 10));
+              .timeout(const Duration(seconds: 25));
           break;
         case 'DELETE':
           res = await _client
               .delete(uri, headers: headers ?? _headers)
-              .timeout(const Duration(seconds: 10));
+              .timeout(const Duration(seconds: 25));
           break;
         default:
           res = await _client
               .get(uri, headers: headers ?? _headers)
-              .timeout(const Duration(seconds: 10));
+              .timeout(const Duration(seconds: 25));
       }
     } catch (e, st) {
       debugPrint('[API] connection error: $e\n$st');
+      if (kIsWeb) {
+        throw ApiException(
+            'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ (ติด CORS หรือเซิร์ฟเวอร์ยังไม่เปิดข้ามโดเมน)');
+      }
       throw ApiException(
-          'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ (หมดเวลาหรือขาดการเชื่อมต่อ)');
+          'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้ (หมดเวลา หรือขาดการเชื่อมต่อ)');
     }
 
     debugPrint('[API] <-- ${res.statusCode} $uri');

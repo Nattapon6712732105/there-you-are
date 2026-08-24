@@ -4,6 +4,10 @@
   "buildCommand": "if [ -d flutter ]; then flutter/bin/flutter build web --release; else git clone https://github.com/flutter/flutter.git -b stable --depth 1 && ./flutter/bin/flutter build web --release; fi",
   "outputDirectory": "build/web",
   "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "https://where-am-i-silk.vercel.app/api/$1"
+    },
     { "handle": "filesystem" },
     {
       "src": "/(.*)",
