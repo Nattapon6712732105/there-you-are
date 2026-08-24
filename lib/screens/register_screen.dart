@@ -37,12 +37,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
+  bool _isOpeningPdpa = false;
+
   Future<void> _showPdpaDialog() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const MyHomePage()),
-    );
-    if (mounted) {
-      setState(() => _acceptedPdpa = true);
+    if (_isOpeningPdpa) return;
+    _isOpeningPdpa = true;
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const MyHomePage()),
+      );
+      if (mounted) {
+        setState(() => _acceptedPdpa = true);
+      }
+    } finally {
+      _isOpeningPdpa = false;
     }
   }
 

@@ -8,7 +8,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/device_service.dart';
 import '../services/permission_service.dart';
-import '../my_home_page.dart';
 import 'welcome_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -2229,6 +2228,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // ==========================================
           Card(
             elevation: 1,
+            clipBehavior: Clip.antiAlias,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
             ),
@@ -2260,19 +2260,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const Divider(height: 1),
                 ListTile(
-                  leading: const Icon(Icons.shield_outlined,
-                      color: Color(0xFF0F766E)),
-                  title: const Text('เงื่อนไขการใช้งาน & นโยบาย PDPA'),
-                  subtitle: const Text('รายงานการคุ้มครองข้อมูลส่วนบุคคล พ.ร.บ. 2562'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const MyHomePage()),
-                    );
-                  },
-                ),
-                const Divider(height: 1),
-                ListTile(
                   leading: const Icon(Icons.dns_outlined, color: Colors.green),
                   title: const Text('สถานะการเชื่อมต่อ API Server'),
                   subtitle:
@@ -2292,6 +2279,7 @@ class _HomeScreenState extends State<HomeScreen> {
           // Logout and Delete Account
           Card(
             elevation: 1,
+            clipBehavior: Clip.antiAlias,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
             ),

@@ -244,6 +244,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         // CONSENT ACKNOWLEDGMENT & TIMESTAMP
                         // ==========================================
                         Container(
+                          clipBehavior: Clip.antiAlias,
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: Colors.white,
@@ -257,26 +258,29 @@ class _MyHomePageState extends State<MyHomePage> {
                           ),
                           child: Column(
                             children: [
-                              CheckboxListTile(
-                                activeColor: primaryColor,
-                                value: _isAccepted,
-                                onChanged: _toggleAcceptance,
-                                title: const Text(
-                                  'ข้าพเจ้าได้อ่าน เข้าใจ และยอมรับเงื่อนไขการใช้งาน รวมถึงยินยอมให้เก็บรวบรวม ใช้ และเปิดเผยข้อมูลส่วนบุคคลตามกฎหมาย PDPA',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
+                              Material(
+                                color: Colors.transparent,
+                                child: CheckboxListTile(
+                                  activeColor: primaryColor,
+                                  value: _isAccepted,
+                                  onChanged: _toggleAcceptance,
+                                  title: const Text(
+                                    'ข้าพเจ้าได้อ่าน เข้าใจ และยอมรับเงื่อนไขการใช้งาน รวมถึงยินยอมให้เก็บรวบรวม ใช้ และเปิดเผยข้อมูลส่วนบุคคลตามกฎหมาย PDPA',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
-                                ),
-                                subtitle: const Padding(
-                                  padding: EdgeInsets.only(top: 4),
-                                  child: Text(
-                                    'การติ๊กเครื่องหมายเป็นการยืนยันความยินยอมทางอิเล็กทรอนิกส์',
-                                    style: TextStyle(fontSize: 11),
+                                  subtitle: const Padding(
+                                    padding: EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      'การติ๊กเครื่องหมายเป็นการยืนยันความยินยอมทางอิเล็กทรอนิกส์',
+                                      style: TextStyle(fontSize: 11),
+                                    ),
                                   ),
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
                                 ),
-                                controlAffinity:
-                                    ListTileControlAffinity.leading,
                               ),
                               if (_acceptedAt != null) ...[
                                 const Divider(),
