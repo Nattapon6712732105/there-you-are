@@ -68,20 +68,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(
-                    Icons.location_on_rounded,
-                    size: 72,
-                    color: Theme.of(context).colorScheme.primary,
+                  Image.asset(
+                    'assets/img/logo.png',
+                    height: 120,
+                    fit: BoxFit.contain,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Where Am I',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 16),
                   TextFormField(
                     controller: _emailCtrl,
                     keyboardType: TextInputType.emailAddress,
