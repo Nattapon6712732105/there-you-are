@@ -621,6 +621,33 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final initLat = double.tryParse(latCtrl.text) ?? 13.7563;
+                            final initLng = double.tryParse(lngCtrl.text) ?? 100.5018;
+                            final picked = await _showMapPinPickerModal(initLat, initLng);
+                            if (picked != null) {
+                              setDialogState(() {
+                                latCtrl.text = picked.latitude.toStringAsFixed(6);
+                                lngCtrl.text = picked.longitude.toStringAsFixed(6);
+                              });
+                            }
+                          },
+                          icon: const Icon(Icons.map_rounded, color: Color(0xFF0F766E), size: 18),
+                          label: const Text(
+                            '📍 เลือกและปักหมุดตำแหน่งบนแผนที่ (สำหรับ PC)',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF0F766E),
+                            side: const BorderSide(color: Color(0xFF0F766E)),
+                            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 12),
                       TextFormField(
                         controller: descCtrl,
@@ -797,6 +824,140 @@ class _HomeScreenState extends State<HomeScreen> {
   );
 }
 
+  Future<LatLng?> _showMapPinPickerModal(double initialLat, double initialLng) async {
+    LatLng selectedPos = LatLng(
+      initialLat == 0.0 ? 13.7563 : initialLat,
+      initialLng == 0.0 ? 100.5018 : initialLng,
+    );
+
+    return showDialog<LatLng>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setMapState) {
+            return Dialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 600, maxHeight: 520),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.pin_drop_rounded, color: Color(0xFF0F766E)),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'เลือกและปักหมุดพิกัดบนแผนที่',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                ),
+                                Text(
+                                  'แตะหรือคลิกตำแหน่งบนแผนที่เพื่อเปลี่ยนตำแหน่งปักหมุด',
+                                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close_rounded),
+                            onPressed: () => Navigator.of(dialogCtx).pop(null),
+                          ),
+                        ],
+                      ),
+                      const Divider(),
+                      Expanded(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: Stack(
+                            children: [
+                              FlutterMap(
+                                options: MapOptions(
+                                  initialCenter: selectedPos,
+                                  initialZoom: 14,
+                                  onTap: (tapPosition, point) {
+                                    setMapState(() {
+                                      selectedPos = point;
+                                    });
+                                  },
+                                ),
+                                children: [
+                                  TileLayer(
+                                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                    userAgentPackageName: 'com.example.there_you_are',
+                                  ),
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: selectedPos,
+                                        width: 50,
+                                        height: 50,
+                                        child: const Icon(
+                                          Icons.location_on_rounded,
+                                          color: Colors.redAccent,
+                                          size: 48,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              Positioned(
+                                top: 10,
+                                left: 10,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: const [
+                                      BoxShadow(color: Colors.black12, blurRadius: 4),
+                                    ],
+                                  ),
+                                  child: Text(
+                                    '📍 Lat: ${selectedPos.latitude.toStringAsFixed(6)}, Lng: ${selectedPos.longitude.toStringAsFixed(6)}',
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      fontFamily: 'monospace',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(dialogCtx).pop(null),
+                            child: const Text('ยกเลิก'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            onPressed: () => Navigator.of(dialogCtx).pop(selectedPos),
+                            icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+                            label: const Text('ยืนยันตำแหน่งนี้'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _showEditCheckInDialog(CheckIn item) async {
     final token = await _api.getToken();
     if (token == null) {
@@ -953,6 +1114,33 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () async {
+                          final initLat = double.tryParse(latCtrl.text) ?? item.lat;
+                          final initLng = double.tryParse(lngCtrl.text) ?? item.lng;
+                          final picked = await _showMapPinPickerModal(initLat, initLng);
+                          if (picked != null) {
+                            setDialogState(() {
+                              latCtrl.text = picked.latitude.toStringAsFixed(6);
+                              lngCtrl.text = picked.longitude.toStringAsFixed(6);
+                            });
+                          }
+                        },
+                        icon: const Icon(Icons.map_rounded, color: Color(0xFF0F766E), size: 18),
+                        label: const Text(
+                          '📍 เลือกและปักหมุดตำแหน่งบนแผนที่ (สำหรับ PC)',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0F766E),
+                          side: const BorderSide(color: Color(0xFF0F766E)),
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
