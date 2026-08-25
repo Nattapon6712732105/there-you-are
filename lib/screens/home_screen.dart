@@ -10,6 +10,26 @@ import '../services/device_service.dart';
 import '../services/permission_service.dart';
 import 'welcome_screen.dart';
 
+class _FriendSummary {
+  final int? id;
+  final String name;
+  final String? profileImage;
+  final int checkInCount;
+  final CheckIn? latestCheckIn;
+  final bool isCurrentUser;
+  final List<CheckIn> allCheckIns;
+
+  const _FriendSummary({
+    this.id,
+    required this.name,
+    this.profileImage,
+    required this.checkInCount,
+    this.latestCheckIn,
+    this.isCurrentUser = false,
+    required this.allCheckIns,
+  });
+}
+
 class HomeScreen extends StatefulWidget {
   final bool autoPromptPermission;
 
@@ -32,6 +52,21 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loadingFeed = true;
   bool _isSystemHealthy = false;
   DeviceDetails? _deviceDetails;
+
+  final TextEditingController _friendSearchController = TextEditingController();
+  String _friendSearchQuery = '';
+  String _friendFilterCategory = 'all';
+
+  // พิกัดเริ่มต้น: มหาวิทยาลัยราชภัฏศรีสะเกษ (Sisaket Rajabhat University - SSKRU)
+  static const double sskruLat = 15.1187;
+  static const double sskruLng = 104.3040;
+  static const LatLng sskruCenter = LatLng(sskruLat, sskruLng);
+
+  @override
+  void dispose() {
+    _friendSearchController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -166,15 +201,20 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _showAllCheckInsMapDialog() {
-    if (_checkIns.isEmpty) return;
-
-    double avgLat =
-        _checkIns.map((e) => e.lat).reduce((a, b) => a + b) / _checkIns.length;
-    double avgLng =
-        _checkIns.map((e) => e.lng).reduce((a, b) => a + b) / _checkIns.length;
+  void _showAllCheckInsMapDialog({LatLng? initialCenterPoint}) {
+    final mapCenter = initialCenterPoint ?? sskruCenter;
+    final mapController = MapController();
 
     CheckIn? selectedItem;
+    if (initialCenterPoint != null) {
+      try {
+        selectedItem = _checkIns.firstWhere(
+          (c) =>
+              (c.lat - initialCenterPoint.latitude).abs() < 0.0001 &&
+              (c.lng - initialCenterPoint.longitude).abs() < 0.0001,
+        );
+      } catch (_) {}
+    }
 
     showDialog(
       context: context,
@@ -182,25 +222,45 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (dialogCtx, setDialogState) => Dialog.fullscreen(
           child: Scaffold(
             appBar: AppBar(
-              title: Text('แผนที่รวมตำแหน่ง (${_checkIns.length} จุด)'),
+              title: Text(
+                _checkIns.isEmpty
+                    ? 'แผนที่ (มรภ.ศรีสะเกษ)'
+                    : 'แผนที่รวมตำแหน่ง (${_checkIns.length} จุด)',
+              ),
               leading: IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: () => Navigator.pop(dialogCtx),
               ),
               actions: [
-                IconButton(
-                  icon: const Icon(Icons.my_location),
-                  tooltip: 'พิกัดกลาง',
-                  onPressed: () => setDialogState(() => selectedItem = null),
+                ActionChip(
+                  avatar: const Icon(Icons.school_rounded,
+                      size: 16, color: Color(0xFF0F766E)),
+                  label: const Text(
+                    'มรภ.ศรีสะเกษ',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF0F766E),
+                    ),
+                  ),
+                  backgroundColor:
+                      const Color(0xFF0F766E).withValues(alpha: 0.1),
+                  side: BorderSide.none,
+                  onPressed: () {
+                    mapController.move(sskruCenter, 14.0);
+                    setDialogState(() => selectedItem = null);
+                  },
                 ),
+                const SizedBox(width: 8),
               ],
             ),
             body: Stack(
               children: [
                 FlutterMap(
+                  mapController: mapController,
                   options: MapOptions(
-                    initialCenter: LatLng(avgLat, avgLng),
-                    initialZoom: 12,
+                    initialCenter: mapCenter,
+                    initialZoom: 13.5,
                     onTap: (tapPos, latLng) =>
                         setDialogState(() => selectedItem = null),
                   ),
@@ -211,42 +271,98 @@ class _HomeScreenState extends State<HomeScreen> {
                       userAgentPackageName: 'com.example.there_you_are',
                     ),
                     MarkerLayer(
-                      markers: _checkIns.map((item) {
-                        final isSelected = selectedItem?.id == item.id;
-                        return Marker(
-                          point: LatLng(item.lat, item.lng),
-                          width: isSelected ? 48 : 36,
-                          height: isSelected ? 48 : 36,
+                      markers: [
+                        // Landmark Marker สำหรับ มหาวิทยาลัยราชภัฏศรีสะเกษ
+                        Marker(
+                          point: sskruCenter,
+                          width: 140,
+                          height: 64,
                           child: GestureDetector(
                             onTap: () {
-                              setDialogState(() => selectedItem = item);
+                              mapController.move(sskruCenter, 15.0);
                             },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              decoration: BoxDecoration(
-                                color: isSelected
-                                    ? const Color(0xFF0F766E)
-                                    : Colors.redAccent,
-                                shape: BoxShape.circle,
-                                border:
-                                    Border.all(color: Colors.white, width: 2),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Colors.black26,
-                                    blurRadius: 6,
-                                    offset: Offset(0, 3),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF0F766E),
+                                    borderRadius: BorderRadius.circular(12),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Colors.black26,
+                                        blurRadius: 4,
+                                        offset: Offset(0, 2),
+                                      ),
+                                    ],
+                                    border: Border.all(
+                                        color: Colors.white, width: 1.5),
                                   ),
-                                ],
-                              ),
-                              child: Icon(
-                                Icons.person_pin_circle_rounded,
-                                color: Colors.white,
-                                size: isSelected ? 30 : 22,
-                              ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.school_rounded,
+                                          color: Colors.white, size: 13),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'มรภ.ศรีสะเกษ',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(Icons.arrow_drop_down,
+                                    color: Color(0xFF0F766E), size: 20),
+                              ],
                             ),
                           ),
-                        );
-                      }).toList(),
+                        ),
+                        // Markers ของ Check-in ทั้งหมด
+                        ..._checkIns.map((item) {
+                          final isSelected = selectedItem?.id == item.id;
+                          return Marker(
+                            point: LatLng(item.lat, item.lng),
+                            width: isSelected ? 48 : 36,
+                            height: isSelected ? 48 : 36,
+                            child: GestureDetector(
+                              onTap: () {
+                                mapController.move(
+                                    LatLng(item.lat, item.lng), 14.5);
+                                setDialogState(() => selectedItem = item);
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? const Color(0xFF0F766E)
+                                      : Colors.redAccent,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                      color: Colors.white, width: 2),
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Colors.black26,
+                                      blurRadius: 6,
+                                      offset: Offset(0, 3),
+                                    ),
+                                  ],
+                                ),
+                                child: Icon(
+                                  Icons.person_pin_circle_rounded,
+                                  color: Colors.white,
+                                  size: isSelected ? 30 : 22,
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
                     ),
                   ],
                 ),
@@ -625,8 +741,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         width: double.infinity,
                         child: OutlinedButton.icon(
                           onPressed: () async {
-                            final initLat = double.tryParse(latCtrl.text) ?? 13.7563;
-                            final initLng = double.tryParse(lngCtrl.text) ?? 100.5018;
+                            final initLat = double.tryParse(latCtrl.text) ?? sskruLat;
+                            final initLng = double.tryParse(lngCtrl.text) ?? sskruLng;
                             final picked = await _showMapPinPickerModal(initLat, initLng);
                             if (picked != null) {
                               setDialogState(() {
@@ -825,8 +941,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<LatLng?> _showMapPinPickerModal(double initialLat, double initialLng) async {
     LatLng selectedPos = LatLng(
-      initialLat == 0.0 ? 13.7563 : initialLat,
-      initialLng == 0.0 ? 100.5018 : initialLng,
+      initialLat == 0.0 ? sskruLat : initialLat,
+      initialLng == 0.0 ? sskruLng : initialLng,
     );
 
     return showDialog<LatLng>(
@@ -1490,8 +1606,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: _currentIndex == 0 ? _buildFeedTab() : _buildProfileTab(),
-      floatingActionButton: _currentIndex == 0
+      body: switch (_currentIndex) {
+        0 => _buildFeedTab(),
+        1 => _buildFriendsTab(),
+        _ => _buildProfileTab(),
+      },
+      floatingActionButton: (_currentIndex == 0 || _currentIndex == 1)
           ? FloatingActionButton.extended(
               onPressed: _showCreateCheckInDialog,
               icon: const Icon(Icons.add_location_alt_rounded),
@@ -1510,7 +1630,12 @@ class _HomeScreenState extends State<HomeScreen> {
           NavigationDestination(
             icon: Icon(Icons.explore_outlined),
             selectedIcon: Icon(Icons.explore_rounded),
-            label: 'Check-ins Feed',
+            label: 'ฟีดเช็คอิน',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.people_alt_outlined),
+            selectedIcon: Icon(Icons.people_alt_rounded),
+            label: 'เพื่อนที่ใช้งาน',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline_rounded),
@@ -1676,27 +1801,22 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(width: 6),
-              if (_checkIns.isNotEmpty)
-                ActionChip(
-                  avatar: const Icon(Icons.map_rounded,
-                      size: 14, color: Color(0xFF0F766E)),
-                  label: Text('ดูแผนที่รวม (${_checkIns.length})',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F766E))),
-                  onPressed: _showAllCheckInsMapDialog,
-                  backgroundColor: const Color(0xFF0F766E).withValues(alpha: 0.1),
-                  visualDensity: VisualDensity.compact,
-                )
-              else
-                Chip(
-                  label: const Text('0 รายการ'),
-                  backgroundColor:
-                      Theme.of(context).colorScheme.primaryContainer,
-                  labelStyle: const TextStyle(fontSize: 11),
-                  visualDensity: VisualDensity.compact,
-                ),
+              ActionChip(
+                avatar: const Icon(Icons.map_rounded,
+                    size: 14, color: Color(0xFF0F766E)),
+                label: Text(
+                    _checkIns.isNotEmpty
+                        ? 'ดูแผนที่รวม (${_checkIns.length})'
+                        : 'ดูแผนที่รวม (มรภ.ศรีสะเกษ)',
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF0F766E))),
+                onPressed: () => _showAllCheckInsMapDialog(),
+                backgroundColor:
+                    const Color(0xFF0F766E).withValues(alpha: 0.1),
+                visualDensity: VisualDensity.compact,
+              ),
             ],
           ),
 
@@ -2041,6 +2161,969 @@ class _HomeScreenState extends State<HomeScreen> {
             }),
         ],
       ),
+    );
+  }
+
+  // ==========================================
+  // ACTIVE FRIENDS TAB & UTILITIES
+  // ==========================================
+  String _formatTimeAgo(DateTime? dt) {
+    if (dt == null) return 'ไม่มีข้อมูลเวลา';
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inSeconds < 60) return 'เมื่อสักครู่';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} นาทีที่แล้ว';
+    if (diff.inHours < 24) return '${diff.inHours} ชั่วโมงที่แล้ว';
+    if (diff.inDays < 7) return '${diff.inDays} วันที่แล้ว';
+    return '${dt.day}/${dt.month}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')} น.';
+  }
+
+  List<_FriendSummary> _getFriendSummaries() {
+    final Map<String, List<CheckIn>> userMap = {};
+
+    for (final item in _checkIns) {
+      final key = item.user?.id?.toString() ??
+          (item.user?.name != null && item.user!.name!.isNotEmpty
+              ? item.user!.name!
+              : 'user_${item.id}');
+      userMap.putIfAbsent(key, () => []).add(item);
+    }
+
+    final List<_FriendSummary> list = [];
+
+    userMap.forEach((key, checkIns) {
+      // Sort newest first
+      checkIns.sort((a, b) {
+        if (a.createdAt == null && b.createdAt == null) return 0;
+        if (a.createdAt == null) return 1;
+        if (b.createdAt == null) return -1;
+        return b.createdAt!.compareTo(a.createdAt!);
+      });
+
+      final first = checkIns.first;
+      final isCurrent = (_user != null &&
+              first.user?.id != null &&
+              _user!.id != null &&
+              first.user!.id == _user!.id) ||
+          (_user?.name != null &&
+              first.user?.name != null &&
+              _user!.name!.trim().isNotEmpty &&
+              first.user!.name!.trim() == _user!.name!.trim());
+
+      final name = first.user?.name ??
+          (isCurrent ? (_user?.name ?? 'คุณ') : 'เพื่อนร่วมใช้งาน');
+
+      list.add(_FriendSummary(
+        id: first.user?.id,
+        name: name,
+        profileImage: first.user?.profileImage,
+        checkInCount: checkIns.length,
+        latestCheckIn: first,
+        isCurrentUser: isCurrent,
+        allCheckIns: checkIns,
+      ));
+    });
+
+    // If current logged-in user has no check-ins yet in the feed, include them in the list
+    if (_user != null && !list.any((f) => f.isCurrentUser)) {
+      list.insert(
+        0,
+        _FriendSummary(
+          id: _user!.id,
+          name: _user!.name ?? 'บัญชีของฉัน',
+          profileImage: _user!.avatarUrl,
+          checkInCount: 0,
+          latestCheckIn: null,
+          isCurrentUser: true,
+          allCheckIns: [],
+        ),
+      );
+    }
+
+    // Filter by search query
+    var filtered = list;
+    if (_friendSearchQuery.trim().isNotEmpty) {
+      final q = _friendSearchQuery.trim().toLowerCase();
+      filtered = filtered.where((f) {
+        final matchName = f.name.toLowerCase().contains(q);
+        final matchLoc =
+            f.latestCheckIn?.locationName?.toLowerCase().contains(q) ?? false;
+        final matchDesc =
+            f.latestCheckIn?.description?.toLowerCase().contains(q) ?? false;
+        return matchName || matchLoc || matchDesc;
+      }).toList();
+    }
+
+    // Filter by Category Chip
+    if (_friendFilterCategory == 'sisaket') {
+      filtered = filtered.where((f) {
+        final loc = f.latestCheckIn?.locationName?.toLowerCase() ?? '';
+        final addr = f.latestCheckIn?.address?.toLowerCase() ?? '';
+        final desc = f.latestCheckIn?.description?.toLowerCase() ?? '';
+        return loc.contains('ศรีสะเกษ') ||
+            loc.contains('มรภ') ||
+            addr.contains('ศรีสะเกษ') ||
+            desc.contains('ศรีสะเกษ');
+      }).toList();
+    } else if (_friendFilterCategory == 'recent') {
+      filtered = filtered.where((f) => f.latestCheckIn != null).toList();
+    }
+
+    // Sort: Current user first, then by latest checkin date, then by count
+    filtered.sort((a, b) {
+      if (a.isCurrentUser && !b.isCurrentUser) return -1;
+      if (!a.isCurrentUser && b.isCurrentUser) return 1;
+      final aDate = a.latestCheckIn?.createdAt;
+      final bDate = b.latestCheckIn?.createdAt;
+      if (aDate != null && bDate != null) {
+        return bDate.compareTo(aDate);
+      }
+      if (aDate != null) return -1;
+      if (bDate != null) return 1;
+      return b.checkInCount.compareTo(a.checkInCount);
+    });
+
+    return filtered;
+  }
+
+  Widget _buildFriendsTab() {
+    final friends = _getFriendSummaries();
+    final totalFriends = friends.length;
+    final totalCheckInsCount = _checkIns.length;
+    final theme = Theme.of(context);
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        setState(() => _loadingFeed = true);
+        await _loadCheckIns();
+        await _checkHealthStatus();
+      },
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        children: [
+          // ==========================================
+          // ACTIVE FRIENDS COMMUNITY HEADER BANNER
+          // ==========================================
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF0F766E), Color(0xFF047857)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF0F766E).withValues(alpha: 0.25),
+                  blurRadius: 15,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(
+                                  Icons.people_alt_rounded,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'เพื่อนร่วมใช้งานในระบบ',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.9),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'พบสมาชิก $totalFriends คน ($totalCheckInsCount จุดเช็คอิน)',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'พิกัดเริ่มต้น: มหาวิทยาลัยราชภัฏศรีสะเกษ',
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _showAllCheckInsMapDialog(),
+                    icon: const Icon(Icons.map_rounded, size: 18),
+                    label: const Text(
+                      '🗺️ ดูแผนที่รวม มรภ.ศรีสะเกษ และเพื่อนทุกคน',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF0F766E),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ==========================================
+          // SEARCH & FILTER BAR
+          // ==========================================
+          TextField(
+            controller: _friendSearchController,
+            onChanged: (val) {
+              setState(() => _friendSearchQuery = val);
+            },
+            decoration: InputDecoration(
+              hintText: 'ค้นหาชื่อเพื่อน หรือสถานที่เช็คอิน...',
+              hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              prefixIcon:
+                  const Icon(Icons.search_rounded, color: Color(0xFF0F766E)),
+              suffixIcon: _friendSearchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear_rounded, size: 18),
+                      onPressed: () {
+                        setState(() {
+                          _friendSearchController.clear();
+                          _friendSearchQuery = '';
+                        });
+                      },
+                    )
+                  : null,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: Colors.grey.shade200),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: Colors.grey.shade200),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide:
+                    const BorderSide(color: Color(0xFF0F766E), width: 2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Category Chips
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                FilterChip(
+                  label: const Text('ทั้งหมด'),
+                  selected: _friendFilterCategory == 'all',
+                  onSelected: (_) =>
+                      setState(() => _friendFilterCategory = 'all'),
+                  selectedColor:
+                      const Color(0xFF0F766E).withValues(alpha: 0.15),
+                  checkmarkColor: const Color(0xFF0F766E),
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: _friendFilterCategory == 'all'
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    color: _friendFilterCategory == 'all'
+                        ? const Color(0xFF0F766E)
+                        : Colors.black87,
+                  ),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  label: const Text('🏫 ศรีสะเกษ / มรภ.'),
+                  selected: _friendFilterCategory == 'sisaket',
+                  onSelected: (_) =>
+                      setState(() => _friendFilterCategory = 'sisaket'),
+                  selectedColor:
+                      const Color(0xFF0F766E).withValues(alpha: 0.15),
+                  checkmarkColor: const Color(0xFF0F766E),
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: _friendFilterCategory == 'sisaket'
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    color: _friendFilterCategory == 'sisaket'
+                        ? const Color(0xFF0F766E)
+                        : Colors.black87,
+                  ),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  label: const Text('⚡ มีเช็คอินล่าสุด'),
+                  selected: _friendFilterCategory == 'recent',
+                  onSelected: (_) =>
+                      setState(() => _friendFilterCategory = 'recent'),
+                  selectedColor:
+                      const Color(0xFF0F766E).withValues(alpha: 0.15),
+                  checkmarkColor: const Color(0xFF0F766E),
+                  labelStyle: TextStyle(
+                    fontSize: 12,
+                    fontWeight: _friendFilterCategory == 'recent'
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                    color: _friendFilterCategory == 'recent'
+                        ? const Color(0xFF0F766E)
+                        : Colors.black87,
+                  ),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // ==========================================
+          // FRIENDS LIST
+          // ==========================================
+          if (_loadingFeed)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 40),
+              child: Center(
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (friends.isEmpty)
+            Card(
+              elevation: 1,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.person_search_rounded,
+                      size: 64,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'ไม่พบรายชื่อเพื่อนที่ตรงกับเงื่อนไข',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _friendSearchQuery.isNotEmpty
+                          ? 'ลองค้นหาด้วยคำอื่น หรือล้างคำค้นหา'
+                          : 'เมื่อเพื่อนของคุณทำการเช็คอิน รายชื่อจะแสดงที่นี่โดยอัตโนมัติ',
+                      textAlign: TextAlign.center,
+                      style:
+                          TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                    ),
+                    if (_friendSearchQuery.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _friendSearchController.clear();
+                            _friendSearchQuery = '';
+                            _friendFilterCategory = 'all';
+                          });
+                        },
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('ล้างการค้นหา'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            )
+          else
+            ...friends.map((friend) => _buildFriendCard(friend, theme)),
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFriendCard(_FriendSummary friend, ThemeData theme) {
+    final latest = friend.latestCheckIn;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 14),
+      elevation: 2,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: friend.isCurrentUser
+            ? const BorderSide(color: Color(0xFF0F766E), width: 1.5)
+            : BorderSide(color: Colors.grey.shade200),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => _showFriendDetailModal(friend),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header Row: Avatar + Name + Badges
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Stack(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundImage: (friend.profileImage != null &&
+                                friend.profileImage!.isNotEmpty)
+                            ? NetworkImage(friend.profileImage!)
+                            : null,
+                        backgroundColor: friend.isCurrentUser
+                            ? const Color(0xFF0F766E)
+                            : theme.colorScheme.primaryContainer,
+                        child: (friend.profileImage == null ||
+                                friend.profileImage!.isEmpty)
+                            ? Text(
+                                friend.name.isNotEmpty
+                                    ? friend.name[0].toUpperCase()
+                                    : '?',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: friend.isCurrentUser
+                                      ? Colors.white
+                                      : theme.colorScheme.primary,
+                                  fontSize: 18,
+                                ),
+                              )
+                            : null,
+                      ),
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          width: 13,
+                          height: 13,
+                          decoration: BoxDecoration(
+                            color: friend.latestCheckIn != null
+                                ? const Color(0xFF10B981)
+                                : Colors.grey.shade400,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                friend.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 15,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (friend.isCurrentUser) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0F766E),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Text(
+                                  'คุณ',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          latest != null
+                              ? '🕒 ${_formatTimeAgo(latest.createdAt)}'
+                              : 'ยังไม่มีประวัติเช็คอิน',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F766E).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.location_on_rounded,
+                          size: 13,
+                          color: Color(0xFF0F766E),
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${friend.checkInCount}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0F766E),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              // Latest Location Section
+              if (latest != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.pin_drop_rounded,
+                        color: Color(0xFF0F766E),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              latest.locationName ??
+                                  'พิกัด: ${latest.lat.toStringAsFixed(4)}, ${latest.lng.toStringAsFixed(4)}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF0F172A),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (latest.description != null &&
+                                latest.description!.isNotEmpty)
+                              Text(
+                                latest.description!,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey.shade600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // Action Buttons Row
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  if (latest != null) ...[
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          _showAllCheckInsMapDialog(
+                            initialCenterPoint:
+                                LatLng(latest.lat, latest.lng),
+                          );
+                        },
+                        icon: const Icon(Icons.map_outlined, size: 15),
+                        label: const Text('ดูบนแผนที่',
+                            style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0F766E),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          side: BorderSide(
+                            color: const Color(0xFF0F766E)
+                                .withValues(alpha: 0.4),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () =>
+                            _openGoogleMaps(latest.lat, latest.lng),
+                        icon: const Icon(Icons.directions_rounded, size: 15),
+                        label:
+                            const Text('นำทาง', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF0D9488),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          side: BorderSide(
+                            color: const Color(0xFF0D9488)
+                                .withValues(alpha: 0.4),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  IconButton.filledTonal(
+                    onPressed: () => _showFriendDetailModal(friend),
+                    icon: const Icon(Icons.arrow_forward_ios_rounded, size: 14),
+                    tooltip: 'ดูประวัติทั้งหมด',
+                    style: IconButton.styleFrom(
+                      backgroundColor:
+                          const Color(0xFF0F766E).withValues(alpha: 0.1),
+                      foregroundColor: const Color(0xFF0F766E),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showFriendDetailModal(_FriendSummary friend) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.7,
+          minChildSize: 0.4,
+          maxChildSize: 0.95,
+          builder: (modalCtx, scrollController) {
+            return Column(
+              children: [
+                // Drag handle
+                Container(
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                // Header
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 26,
+                        backgroundImage: (friend.profileImage != null &&
+                                friend.profileImage!.isNotEmpty)
+                            ? NetworkImage(friend.profileImage!)
+                            : null,
+                        backgroundColor: const Color(0xFF0F766E),
+                        child: (friend.profileImage == null ||
+                                friend.profileImage!.isEmpty)
+                            ? Text(
+                                friend.name.isNotEmpty
+                                    ? friend.name[0].toUpperCase()
+                                    : '?',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                ),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    friend.name,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                if (friend.isCurrentUser) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF0F766E),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Text(
+                                      'คุณ',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'ประวัติการเช็คอินทั้งหมด ${friend.checkInCount} จุด',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () => Navigator.pop(modalCtx),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+
+                // Check-in items list
+                Expanded(
+                  child: friend.allCheckIns.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.location_off_rounded,
+                                    size: 48, color: Colors.grey.shade400),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'ยังไม่มีประวัติการเช็คอิน',
+                                  style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          controller: scrollController,
+                          padding: const EdgeInsets.all(20),
+                          itemCount: friend.allCheckIns.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 12),
+                          itemBuilder: (itemCtx, index) {
+                            final item = friend.allCheckIns[index];
+                            final formattedDate = item.createdAt != null
+                                ? '${item.createdAt!.day}/${item.createdAt!.month}/${item.createdAt!.year} ${item.createdAt!.hour.toString().padLeft(2, '0')}:${item.createdAt!.minute.toString().padLeft(2, '0')} น.'
+                                : '';
+
+                            return Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF0F766E)
+                                              .withValues(alpha: 0.1),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.location_on_rounded,
+                                          color: Color(0xFF0F766E),
+                                          size: 18,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              item.locationName ??
+                                                  'ไม่ได้ระบุชื่อสถานที่',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                            if (formattedDate.isNotEmpty)
+                                              Text(
+                                                formattedDate,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Colors.grey.shade600,
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (item.description != null &&
+                                      item.description!.isNotEmpty) ...[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      item.description!,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade800,
+                                      ),
+                                    ),
+                                  ],
+                                  if (item.imageUrl != null &&
+                                      item.imageUrl!.isNotEmpty) ...[
+                                    const SizedBox(height: 10),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: _buildImageWidget(item.imageUrl!,
+                                          height: 140),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      TextButton.icon(
+                                        onPressed: () {
+                                          Navigator.pop(modalCtx);
+                                          _showAllCheckInsMapDialog(
+                                            initialCenterPoint:
+                                                LatLng(item.lat, item.lng),
+                                          );
+                                        },
+                                        icon: const Icon(Icons.map_rounded,
+                                            size: 15),
+                                        label: const Text('ดูบนแผนที่',
+                                            style: TextStyle(fontSize: 12)),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      TextButton.icon(
+                                        onPressed: () => _openGoogleMaps(
+                                            item.lat, item.lng),
+                                        icon: const Icon(
+                                            Icons.navigation_rounded,
+                                            size: 15),
+                                        label: const Text('Google Maps',
+                                            style: TextStyle(fontSize: 12)),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
